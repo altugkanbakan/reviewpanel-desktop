@@ -1,30 +1,30 @@
-target_word,suggested_replacement,rule_category,rationale
-diabetic,patient with diabetes,Patient-First Language,Avoid defining patients by their condition. Use person-first language (AMA Style).
-diabetics,patients with diabetes,Patient-First Language,Avoid defining patients by their condition. Use person-first language (AMA Style).
-addict,individual with substance use disorder,Patient-First Language,Stigmatizing term. Use precise medical terminology.
-addicts,individuals with substance use disorder,Patient-First Language,Stigmatizing term. Use precise medical terminology.
-alcoholic,patient with alcohol use disorder,Patient-First Language,Stigmatizing term.
-schizophrenic,patient with schizophrenia,Patient-First Language,Avoid defining patients by their disease.
-subject,patient / participant,Editorial Standard,AMA prefers 'patient' for clinical care and 'participant' for research. 'Subject' implies loss of autonomy.
-subjects,patients / participants,Editorial Standard,AMA prefers 'patient' for clinical care and 'participant' for research.
-victim of,patient with / person who experienced,Patient-First Language,"Avoid emotional language. Use neutral, objective descriptions."
-suffering from,patient with / diagnosed with,Patient-First Language,"Avoid emotional language. Use neutral, objective descriptions."
-wheelchair-bound,person who uses a wheelchair,Patient-First Language,Focus on the person and the assistive device neutrally.
-non-compliant,non-adherent,Patient-First Language,"'Non-compliant' is paternalistic. 'Non-adherent' reflects a failure of the treatment plan, not just the patient."
-expired,died,Editorial Standard,"'Expired' applies to medications, not patients. Use clear, objective terminology (died)."
-chief complaint,primary concern / presenting symptom,Editorial Standard,"'Complaint' can have negative connotations. 'Primary concern' is increasingly preferred, though 'chief complaint' is still widely understood."
-provider,clinician / physician / nurse,Editorial Standard,Specify the exact role. 'Provider' is considered overly generic and corporate by many medical societies.
-prove,demonstrate / show / suggest,Causal Discipline,Studies rarely 'prove' anything definitively. Use more scientifically accurate hedging.
-proves,demonstrates / shows / suggests,Causal Discipline,Studies rarely 'prove' anything definitively. Use more scientifically accurate hedging.
-impact,association / effect,Causal Discipline,"In observational studies, 'impact' implies a causal relationship that is not supported by the design."
-impacts,is associated with / affects,Causal Discipline,"In observational studies, 'impacts' implies a causal relationship that is not supported by the design."
-cause,associated with / correlated with,Causal Discipline,"Do not use 'cause' unless the study is a rigorously designed RCT."
-causes,is associated with / correlates with,Causal Discipline,"Do not use 'causes' unless the study is a rigorously designed RCT."
-significant,substantial / marked / clinically important,Statistical Clarity,"Reserve 'significant' ONLY for 'statistically significant' (p<0.05). If describing size or importance, use alternatives."
-significantly,substantially / markedly,Statistical Clarity,"Reserve 'significantly' ONLY for statistical contexts. Use alternatives for magnitude."
-novel,new / previously unreported,Style / Tone,"Subjective, promotional adjective. Let the literature review establish the novelty."
-groundbreaking,notable / important,Style / Tone,Subjective and promotional. Remove from academic prose.
-paradigm-shifting,important,Style / Tone,Subjective and promotional. Remove from academic prose.
-gold standard,reference standard / criterion standard,Editorial Standard,"'Reference standard' is preferred in diagnostic accuracy studies (STARD/TRIPOD)."
-statistically significant trend,trend toward significance,Statistical Clarity,"An outcome is either significant or it is not. A 'trend' is not 'statistically significant'."
-approaching significance,trend toward significance / p-value of X,Statistical Clarity,Report the exact p-value rather than using subjective phrases.
+target_word,suggested_replacement,rule_category,applies_to,rationale
+diabetic,patient with diabetes,Patient-First Language,all,Avoid defining patients by their condition. Use person-first language (AMA Style).
+diabetics,patients with diabetes,Patient-First Language,all,Avoid defining patients by their condition. Use person-first language (AMA Style).
+addict,individual with substance use disorder,Patient-First Language,all,Stigmatizing term. Use precise medical terminology.
+addicts,individuals with substance use disorder,Patient-First Language,all,Stigmatizing term. Use precise medical terminology.
+alcoholic,patient with alcohol use disorder,Patient-First Language,all,Stigmatizing term.
+schizophrenic,patient with schizophrenia,Patient-First Language,all,Avoid defining patients by their disease.
+subject,participant,Editorial Standard,clinical_only,"In clinical care writing and case reports, prefer 'patient'. In research methodology and AI/computational studies, 'subject' is widely accepted — flag only as a minor suggestion, not an error."
+subjects,participants,Editorial Standard,clinical_only,"In clinical care writing, prefer 'patients'. In research and methodology papers, 'subjects' is acceptable."
+victim of,patient with / person who experienced,Patient-First Language,all,"Avoid emotional language. Use neutral, objective descriptions."
+suffering from,patient with / diagnosed with,Patient-First Language,all,"Avoid emotional language. Use neutral, objective descriptions."
+wheelchair-bound,person who uses a wheelchair,Patient-First Language,all,Focus on the person and the assistive device neutrally.
+non-compliant,non-adherent,Patient-First Language,all,"'Non-compliant' is paternalistic. 'Non-adherent' reflects a failure of the treatment plan, not just the patient."
+expired,died,Editorial Standard,all,"'Expired' applies to medications, not patients. Use clear, objective terminology (died)."
+chief complaint,primary concern / presenting symptom,Editorial Standard,clinical_only,"'Complaint' can have negative connotations in patient-facing contexts. In academic methods papers this term is standard — flag only in clinical writing."
+provider,clinician / physician / nurse,Editorial Standard,all,Specify the exact role. 'Provider' is considered overly generic and corporate by many medical societies.
+prove,demonstrate / show / suggest,Causal Discipline,all,Studies rarely 'prove' anything definitively. Use more scientifically accurate hedging.
+proves,demonstrates / shows / suggests,Causal Discipline,all,Studies rarely 'prove' anything definitively. Use more scientifically accurate hedging.
+impact,association / effect,Causal Discipline,observational_only,"In observational studies, 'impact' implies a causal relationship not supported by the design. Acceptable in RCTs and experimental studies."
+impacts,is associated with / affects,Causal Discipline,observational_only,"In observational studies, 'impacts' implies causation. Acceptable in RCTs."
+cause,associated with / correlated with,Causal Discipline,observational_only,"Do not use 'cause' unless the study is a rigorously designed RCT."
+causes,is associated with / correlates with,Causal Discipline,observational_only,"Do not use 'causes' unless the study is an RCT."
+significant,substantial / marked / clinically important,Statistical Clarity,all,"Reserve 'significant' ONLY for 'statistically significant' (p<0.05). If describing size or importance, use alternatives."
+significantly,substantially / markedly,Statistical Clarity,all,"Reserve 'significantly' ONLY for statistical contexts. Use alternatives for magnitude."
+novel,new / previously unreported,Style / Tone,all,"Subjective, promotional adjective. Let the literature review establish the novelty."
+groundbreaking,notable / important,Style / Tone,all,Subjective and promotional. Remove from academic prose.
+paradigm-shifting,important,Style / Tone,all,Subjective and promotional. Remove from academic prose.
+gold standard,reference standard / criterion standard,Editorial Standard,all,"'Reference standard' is preferred in diagnostic accuracy studies (STARD/TRIPOD)."
+statistically significant trend,trend toward significance,Statistical Clarity,all,"An outcome is either significant or it is not. A 'trend' is not 'statistically significant'."
+approaching significance,trend toward significance / p-value of X,Statistical Clarity,all,Report the exact p-value rather than using subjective phrases.
