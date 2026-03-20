@@ -1,77 +1,121 @@
 # Review Panel
 
-AI-powered medical manuscript reviewer with automated hardware detection, Ollama integration, and a modern GUI.
+**AI-powered pre-submission review for medical manuscripts — runs entirely on your own computer.**
 
-Runs 6 sequential review agents locally via Ollama — no cloud, no data leaves your machine.
+Review Panel reads your manuscript and runs it through 6 specialist AI reviewers, each focusing on a different aspect: language and style, internal consistency, clinical claims, statistics, tables and figures, and overall scientific impact. The result is a structured report in the same format a real journal referee would use.
 
----
-
-## Platforms
-
-| Platform | Folder | Output |
-|----------|--------|--------|
-| Windows  | `windows/` | `ReviewPanel.exe` (Inno Setup installer) |
-| macOS    | `unix/` | `ReviewPanel.app` + optional `.dmg` |
-| Linux    | `unix/` | `ReviewPanel` binary |
+Everything runs locally. Your manuscript never leaves your machine.
 
 ---
 
-## Windows — Build
+## What you need before starting
 
-Requirements: Python 3.10+, pip
-
-```bat
-cd windows
-build.bat
-```
-
-The installer is created at `windows/dist/ReviewPanel_Setup.exe`.
+- A Windows, Mac, or Linux computer
+- At least **8 GB of RAM** (16 GB recommended)
+- A dedicated GPU with 6+ GB VRAM gives the best results, but the app works on CPU-only machines (slower)
+- An internet connection for the first-time setup only
 
 ---
 
-## macOS — Build
+## Installation
 
-```bash
-cd unix
-bash build_mac.sh
-```
+### Windows
 
-Output: `unix/dist/ReviewPanel.app`
-Optional DMG requires `brew install create-dmg`.
+1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
+2. Download `ReviewPanel_Setup.exe`
+3. Run the installer and follow the steps
+4. Launch **Review Panel** from the Start menu
 
----
+### macOS
 
-## Linux — Build
+1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
+2. Download `ReviewPanel-macOS.zip`
+3. Unzip and move `ReviewPanel.app` to your Applications folder
+4. Double-click to open
 
-```bash
-cd unix
-bash build_linux.sh
-```
+> If macOS says the app "cannot be opened because the developer cannot be verified", go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
-Output: `unix/dist/ReviewPanel`
-To install system-wide: `sudo cp dist/ReviewPanel /usr/local/bin/reviewpanel`
+### Linux
 
----
-
-## Automated Builds (GitHub Actions)
-
-Push to `main` → GitHub Actions builds Mac + Linux binaries automatically.
-See `.github/workflows/build.yml` for details.
-
-Windows builds are done locally via `windows/build.bat`.
+1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
+2. Download `ReviewPanel`
+3. Open a terminal in the download folder and run:
+   ```bash
+   chmod +x ReviewPanel
+   ./ReviewPanel
+   ```
 
 ---
 
-## Requirements
+## First-time setup
 
-- [Ollama](https://ollama.com) (auto-installed on first run)
-- A supported LLM model (app guides you through selection based on your hardware)
+When you open Review Panel for the first time:
+
+1. **Hardware Check** — Click the *Hardware Check* button in the top bar. The app will scan your GPU and RAM and suggest which AI models will run well on your machine.
+
+2. **Install Ollama** — If Ollama is not installed, the app will offer to install it for you automatically. Click *Install* and wait for it to finish. Ollama is the engine that runs the AI models locally.
+
+3. **Download a model** — Select a model from the dropdown list. Models marked *Perfect* will be fast and accurate on your hardware. Click *Pull Model* to download it. This takes a few minutes depending on your internet speed.
+
+You only need to do this once. After setup, the app opens directly to the review screen.
+
+---
+
+## How to run a review
+
+1. **Select a journal** from the dropdown — choose the journal you are submitting to, or select *Top Medical* for a general top-tier standard
+2. **Load your manuscript** — Click *Load Manuscript* and select your `.docx` file
+3. **Click Start Review**
+4. Watch the 6 agent panels on the right as each reviewer completes its section
+5. When all agents finish, click **Open Report** to view and save your review as a Markdown file
+
+The report includes:
+- Language, style and patient-first terminology issues
+- Abstract vs. main text consistency check
+- Causal language and clinical claim discipline
+- Statistical reporting completeness
+- Tables and figures check
+- Overall scientific impact rating with a referee recommendation
+
+---
+
+## Frequently asked questions
+
+**Does my manuscript get sent to the internet?**
+No. Everything runs on your own machine through Ollama. No data is transmitted anywhere.
+
+**How long does a review take?**
+Typically 5–15 minutes depending on your hardware and model. A dedicated GPU with a larger model gives faster, better results.
+
+**What file formats are supported?**
+Currently `.docx` (Microsoft Word). PDF support is planned for a future version.
+
+**The hardware check button doesn't work — what do I do?**
+The hardware check requires a small companion tool called **llmfit**. Download it separately and place it next to the Review Panel executable:
+
+1. Go to the [llmfit releases page](https://github.com/AlexsJones/llmfit/releases/tag/v0.8.0)
+2. Download the correct file for your system:
+
+| System | File to download |
+|--------|-----------------|
+| Windows (most computers) | `llmfit-v0.8.0-x86_64-pc-windows-msvc.zip` |
+| Mac (M1/M2/M3) | `llmfit-v0.8.0-aarch64-apple-darwin.tar.gz` |
+| Mac (Intel) | `llmfit-v0.8.0-x86_64-apple-darwin.tar.gz` |
+| Linux (most) | `llmfit-v0.8.0-x86_64-unknown-linux-gnu.tar.gz` |
+
+3. Extract the archive and place the `llmfit` (or `llmfit.exe` on Windows) file in the **same folder** as `ReviewPanel.exe` / `ReviewPanel.app` / `ReviewPanel`
+4. Restart Review Panel — the hardware check button will now work
+
+> A future update (v2.2) will remove this manual step entirely.
+
+**Can I use a model I already have installed in Ollama?**
+Yes. Any model already pulled in Ollama will appear in the dropdown automatically.
 
 ---
 
 ## License
 
-AGPL v3 for open-source use. Commercial license available for proprietary/specialty deployments.
-See [LICENSE](LICENSE) for details.
+Free for personal and academic use under AGPL v3.
+Commercial license available for institutional and specialty deployments — contact via [LinkedIn](https://linkedin.com/in/drkanbakan).
 
 **Developer:** Altuğ Kanbakan — [GitHub](https://github.com/altugkanbakan) · [LinkedIn](https://linkedin.com/in/drkanbakan)
