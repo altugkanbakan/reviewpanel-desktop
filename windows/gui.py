@@ -580,7 +580,7 @@ class AboutWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             self,
-            text="v2.0",
+            text="v2.1",
             text_color="gray40",
             font=ctk.CTkFont(size=11),
         ).pack(pady=(20, 0))

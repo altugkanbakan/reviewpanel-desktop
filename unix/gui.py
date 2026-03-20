@@ -582,7 +582,7 @@ class AboutWindow(ctk.CTkToplevel):
             command=lambda: webbrowser.open("https://www.linkedin.com/in/drkanbakan/"),
         ).pack(side="left", padx=6)
 
-        ctk.CTkLabel(self, text="v2.0", text_color="gray40",
+        ctk.CTkLabel(self, text="v2.1", text_color="gray40",
                      font=ctk.CTkFont(size=11)).pack(pady=(20, 0))
 
 
