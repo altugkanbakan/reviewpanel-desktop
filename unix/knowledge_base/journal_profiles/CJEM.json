@@ -1,0 +1,20 @@
+{
+  "journal_name": "Canadian Journal of Emergency Medicine",
+  "abbreviation": "CJEM",
+  "editorial_focus": "Advancing emergency medicine clinical practice, health systems, emergency medical services (EMS), and medical education. Strong preference for studies impacting systems of care, crowding, and resident/physician education.",
+  "target_audience": "Academic and community emergency physicians, EMS medical directors, medical educators, and health policy makers.",
+  "desk_reject_triggers": [
+    "Single-center retrospective chart reviews with sample sizes under 200 without a highly novel question.",
+    "Studies focusing purely on local administrative/policy issues without generalizable clinical or systemic implications.",
+    "Case reports lacking a fundamental change to existing treatment paradigms."
+  ],
+  "methodology_requirements": {
+    "observational": "Strict STROBE compliance. Retrospective cohorts must explicitly address unmeasured confounding and missing data handling.",
+    "clinical_trials": "CONSORT compliance mandatory. Must include Trial Registration Number. Clear definition of primary vs secondary outcomes.",
+    "medical_education": "Requires robust evaluation frameworks (e.g., Kirkpatrick Level 3 or 4 preferred). Pure descriptive surveys of residents are low priority.",
+    "simulation": "Must follow specific simulation reporting guidelines. Preference for translational simulation (systems testing) over simple educational interventions."
+  },
+  "statistical_requirements": "Exact p-values required. 95% CIs mandatory for all primary and secondary effect sizes. A priori sample size/power calculations expected for all prospective work.",
+  "style_and_formatting": "AMA Manual of Style. Structured abstract (Intro, Methods, Results, Conclusion). Max 3000 words for original research.",
+  "referee_persona_instructions": "Act as a pragmatic, systems-oriented academic EM physician. Prioritize the 'so what?' question—how does this change shift management, ED flow, or trainee education? Be highly critical of poorly validated survey instruments and single-center biases. Push authors on external validity."
+}

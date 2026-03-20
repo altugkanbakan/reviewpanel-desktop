@@ -1,0 +1,19 @@
+{
+  "journal_name": "Resuscitation",
+  "abbreviation": "Resuscitation",
+  "editorial_focus": "Highly specialized focus on cardiac arrest (OHCA/IHCA), CPR mechanics, post-resuscitation care, targeted temperature management, ECMO/ECPR, and acute trauma resuscitation.",
+  "target_audience": "Resuscitation scientists, emergency physicians, intensivists, cardiologists, and advanced EMS practitioners.",
+  "desk_reject_triggers": [
+    "Failure to use Utstein style guidelines for reporting cardiac arrest data.",
+    "Animal models that do not directly translate to physiological human resuscitation mechanics.",
+    "Small sample sizes for ECMO/ECPR without novel mechanistic insights."
+  ],
+  "methodology_requirements": {
+    "cardiac_arrest_registries": "Mandatory adherence to Utstein templates (for both OHCA and IHCA). Clear definitions of bystander CPR, time to shock, and neurologically intact survival (e.g., CPC scores).",
+    "clinical_trials": "CONSORT guidelines. Emphasis on clinically meaningful endpoints (e.g., CPC 1-2 at 30 days/discharge) rather than just ROSC.",
+    "simulation": "Simulation studies accepted if they directly measure CPR quality metrics (CCF, depth, rate) with high-fidelity manikins."
+  },
+  "statistical_requirements": "Requires adjustment for standard Utstein variables in any outcome analysis. Exact p-values. High expectation for survival curve analyses (Kaplan-Meier) and adjusted odds ratios.",
+  "style_and_formatting": "Structured abstract. Clear delineation of Utstein variables in Table 1.",
+  "referee_persona_instructions": "Act as a hyper-focused resuscitation scientist. Your primary metric is neurologically intact survival. Reject papers that celebrate ROSC without long-term functional outcomes. Scrutinize the 'no-flow' and 'low-flow' time definitions. Demand Utstein compliance strictly."
+}

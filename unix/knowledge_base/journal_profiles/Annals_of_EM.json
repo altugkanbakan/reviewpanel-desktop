@@ -1,0 +1,20 @@
+{
+  "journal_name": "Annals of Emergency Medicine",
+  "abbreviation": "AnnalsEM",
+  "editorial_focus": "The highest-impact journal in emergency medicine. Focuses on practice-changing clinical trials, high-quality prospective cohorts, and rigorous systemic analyses. Zero tolerance for incremental or 'salami-sliced' publications.",
+  "target_audience": "Global emergency medicine clinicians, researchers, and policy-makers.",
+  "desk_reject_triggers": [
+    "Lack of a clear, practice-changing clinical bottom line.",
+    "Methodologically weak retrospective studies with overt selection bias.",
+    "Surveys with response rates under 60% or lack of non-response bias analysis.",
+    "Studies where the outcome is purely surrogate (e.g., lab value change) without proven clinical correlation."
+  ],
+  "methodology_requirements": {
+    "observational": "Must use advanced methods to control for confounding (e.g., propensity score matching, instrumental variables). STROBE strictly enforced.",
+    "clinical_trials": "Requires CONSORT. Must be prospectively registered. High expectation for multi-center data.",
+    "systematic_reviews": "PRISMA compliance. Must include rigorous risk of bias assessment (e.g., Cochrane RoB 2)."
+  },
+  "statistical_requirements": "Extremely rigorous. 95% CIs for all point estimates. Absolute risk reductions (ARR) and Number Needed to Treat (NNT) preferred over relative risks for clinical outcomes. Handling of missing data must be statistically robust (e.g., multiple imputation).",
+  "style_and_formatting": "Strict adherence to AMA Style. Requires a 'Supervising Editor's Capsule Summary' style takeaway. Abstract must be highly structured.",
+  "referee_persona_instructions": "Act as a top-tier, methodologically ruthless statistical editor. Attack any assumption of causality in observational data. Demand NNT/NNH. If the study doesn't explicitly tell an EM physician what to do differently on their next shift, recommend rejection. Scrutinize patient flow and dropouts (CONSORT/STROBE diagrams) aggressively."
+}

@@ -1,0 +1,94 @@
+name: Build Unix Binaries
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: macOS Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: unix
+        run: pip install -r requirements.txt --quiet
+
+      - name: Download llmfit
+        working-directory: unix
+        run: |
+          ARCH=$(uname -m)
+          VER="v0.8.0"
+          if [ "$ARCH" = "arm64" ]; then
+            ASSET="llmfit-${VER}-aarch64-apple-darwin.tar.gz"
+          else
+            ASSET="llmfit-${VER}-x86_64-apple-darwin.tar.gz"
+          fi
+          curl -L "https://github.com/AlexsJones/llmfit/releases/download/${VER}/${ASSET}" -o llmfit_tmp.tar.gz
+          tar -xzf llmfit_tmp.tar.gz --strip-components=1
+          chmod +x llmfit
+          rm -f llmfit_tmp.tar.gz
+
+      - name: Build .app
+        working-directory: unix
+        run: pyinstaller ReviewPanel_mac.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReviewPanel-macOS
+          path: unix/dist/ReviewPanel.app
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
+
+      - name: Install dependencies
+        working-directory: unix
+        run: pip install -r requirements.txt --quiet
+
+      - name: Download llmfit
+        working-directory: unix
+        run: |
+          ARCH=$(uname -m)
+          VER="v0.8.0"
+          if [ "$ARCH" = "aarch64" ]; then
+            ASSET="llmfit-${VER}-aarch64-unknown-linux-gnu.tar.gz"
+          else
+            ASSET="llmfit-${VER}-x86_64-unknown-linux-gnu.tar.gz"
+          fi
+          curl -L "https://github.com/AlexsJones/llmfit/releases/download/${VER}/${ASSET}" -o llmfit_tmp.tar.gz
+          tar -xzf llmfit_tmp.tar.gz --strip-components=1
+          chmod +x llmfit
+          rm -f llmfit_tmp.tar.gz
+
+      - name: Build binary
+        working-directory: unix
+        run: pyinstaller ReviewPanel_linux.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReviewPanel-Linux
+          path: unix/dist/ReviewPanel
+          if-no-files-found: error

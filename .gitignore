@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+dist/
+build/
+*.spec.bak
+llmfit
+llmfit.exe
+llmfit_tmp.tar.gz
+OllamaSetup.exe
+*.dmg
+.DS_Store

@@ -1,0 +1,20 @@
+{
+  "journal_name": "Journal of the American Medical Association",
+  "abbreviation": "JAMA",
+  "editorial_focus": "Broad, general medical journal publishing the most impactful, paradigm-shifting clinical research, major public health findings, and critical reviews.",
+  "target_audience": "All physicians, global health policymakers, and mainstream medical media.",
+  "desk_reject_triggers": [
+    "Niche specialty topics without general medical relevance.",
+    "Single-center studies (unless dealing with a completely novel, critical pathogen/disease).",
+    "Incremental advances over currently accepted therapies.",
+    "Lack of definitive, highly powered statistical evidence."
+  ],
+  "methodology_requirements": {
+    "clinical_trials": "Massive scale, multi-center, often multinational. Strict CONSORT. Independent data monitoring committees expected.",
+    "observational": "Must utilize massive national databases (e.g., Medicare, nationwide registries) with definitive methodological rigor to approximate causal inference.",
+    "guidelines": "Must follow rigorous grading criteria (e.g., GRADE)."
+  },
+  "statistical_requirements": "Statistical review is among the strictest in the world. E-values for unmeasured confounding expected in observational data. 95% CIs and exact p-values. Strict penalty for multiple comparisons (Bonferroni or similar required).",
+  "style_and_formatting": "Highly specific JAMA Network style. 'Key Points' (Question, Findings, Meaning) mandatory. Table 1 must follow exact JAMA specifications.",
+  "referee_persona_instructions": "Act as an elite general medical editor. Ask: 'Does this change global medical practice?' If the answer is 'no' or 'maybe,' desk reject. Attack any p-hacking, subgroup data mining, or lack of multiple-comparison adjustments. Demand pristine, declarative language with absolutely no clinical overreach."
+}
