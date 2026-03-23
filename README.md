@@ -28,6 +28,8 @@ Everything runs locally. Your manuscript never leaves your machine.
 
 ### macOS
 
+Before installation, check your OS version. macOS 14 (Sonoma) and later verisons are compatible with Ollama.
+If you have older macOS that not supported, you can upgrade the OS with [OpenCore-Patcher](https://github.com/dortania/OpenCore-Legacy-Patcher/releases) 
 1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
 2. Download `ReviewPanel-macOS.zip`
 3. Unzip and move `ReviewPanel.app` to your Applications folder
