@@ -31,8 +31,8 @@ Everything runs locally. Your manuscript never leaves your machine.
 Before installation, check your OS version. macOS 14 (Sonoma) and later verisons are compatible with Ollama.
 If you have older macOS that not supported, you can upgrade the OS with [OpenCore-Patcher](https://github.com/dortania/OpenCore-Legacy-Patcher/releases) 
 1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
-2. Download `ReviewPanel-macOS.zip`
-3. Unzip and move `ReviewPanel.app` to your Applications folder
+2. Download `ReviewPanel-macOS.dmg`
+3. Open the DMG and move `ReviewPanel.app` to your Applications folder
 4. Double-click to open
 
 > If macOS says the app "cannot be opened because the developer cannot be verified", go to **System Settings → Privacy & Security** and click **Open Anyway**.
@@ -63,13 +63,41 @@ You only need to do this once. After setup, the app opens directly to the review
 
 ---
 
-## How to run a review
+## How to use
 
-1. **Select a journal** from the dropdown — choose the journal you are submitting to, or select *Top Medical* for a general top-tier standard
-2. **Load your manuscript** — Click *Load Manuscript* and select your `.docx` file
-3. **Click Start Review**
-4. Watch the 6 agent panels on the right as each reviewer completes its section
-5. When all agents finish, click **Open Report** to view and save your review as a Markdown file
+![Review Panel main interface](docs/UI-1.png)
+
+The interface is split into two panels. The **Settings panel** on the left is where you configure and launch your review. The **Progress panel** on the right shows the live output from each of the 6 AI reviewer agents.
+
+### Step 1 — Load your manuscript
+
+Click the **`...`** button next to *Manuscript file* and select your `.docx` file.
+
+### Step 2 — Select a target journal
+
+Click the *Target journal* dropdown to choose the journal you are submitting to.
+
+![Journal selection dropdown](docs/UI-2.png)
+
+Available profiles include **JAMA, NEJM, Lancet, BMJ, CJEM, AnnalsEM, Resuscitation, AJEM, JAMIA, BMCMedEd, SimHealthcare**, and **top-medical** (a combined top-tier standard for when you haven't decided on a journal yet).
+
+### Step 3 — Choose an AI model
+
+Click the *Ollama model* dropdown to select the model you want to use for the review.
+
+![Model selection dropdown](docs/UI-3.png)
+
+Models already pulled in Ollama appear here automatically. The refresh button (🔄) next to the dropdown reloads the list. If a model you want is not listed, type its name and click **Pull Model** to download it.
+
+> Models with more parameters (e.g. `qwen2.5:14b`) produce more detailed and accurate reviews but require more RAM and VRAM and run slower.
+
+### Step 4 — Run the review
+
+Click **▶ Run Review**. The 6 agent panels on the right will light up one by one as each reviewer completes its section. A progress bar and live log show what is happening. Reviews typically take 5–15 minutes depending on your hardware and model.
+
+### Step 5 — Open the report
+
+When all 6 agents finish, click **Open Report** to view and save the review as a Markdown file.
 
 The report includes:
 - Language, style and patient-first terminology issues
