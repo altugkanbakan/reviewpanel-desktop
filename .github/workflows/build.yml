@@ -49,11 +49,13 @@ jobs:
         working-directory: unix
         run: pyinstaller ReviewPanel_mac.spec --noconfirm
 
-      - name: Zip .app for release
+      - name: Create DMG for release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          cd unix/dist
-          zip -r ReviewPanel-macOS.zip ReviewPanel.app
+          hdiutil create -volname "ReviewPanel" \
+            -srcfolder unix/dist/ReviewPanel.app \
+            -ov -format UDZO \
+            unix/dist/ReviewPanel-macOS.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -66,7 +68,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: unix/dist/ReviewPanel-macOS.zip
+          files: unix/dist/ReviewPanel-macOS.dmg
 
   build-linux:
     name: Linux Build
