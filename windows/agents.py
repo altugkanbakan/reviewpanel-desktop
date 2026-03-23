@@ -104,8 +104,14 @@ _AGENT_TASKS = {
         "'leads to', 'results in') used in observational studies. Demand "
         "associative language instead. Differentiate between clinical and "
         "statistical significance. Flag unaddressed confounding biases.\n\n"
+        "CRITICAL RULE: For every finding in Causal Overclaiming, you MUST "
+        "provide (a) the exact original sentence quoted from the manuscript, "
+        "and (b) a revised version using appropriate associative language. "
+        "The revised sentence MUST be meaningfully different from the original "
+        "— do not repeat the original text as the suggested fix.\n\n"
         "Output: A Markdown report with three sections:\n"
-        "- **Causal Overclaiming** (numbered list)\n"
+        "- **Causal Overclaiming** (numbered list — each item: original quote, "
+        "then suggested revision)\n"
         "- **Clinical/Statistical Conflation** (numbered list)\n"
         "- **Missing Caveats** (numbered list)"
     ),
@@ -123,8 +129,23 @@ _AGENT_TASKS = {
         "Ensure STROBE/CONSORT patient flow diagrams are mathematically correct. "
         "Check axis scaling (log scale for OR/HR). Verify all referenced figures "
         "and tables exist and are properly labelled.\n\n"
+        "CRITICAL RULES:\n"
+        "1. PLAIN TEXT LIMITATION: This manuscript was extracted from a .docx "
+        "file. Embedded tables, figures, and images are NOT visible in the text "
+        "you receive — only their captions or titles may appear as paragraph "
+        "text. Do NOT flag a table or figure as missing solely because its data "
+        "rows are absent from the plain text. Only flag structural absence when "
+        "the manuscript text itself says the element exists but you find no "
+        "caption or reference to it anywhere.\n"
+        "2. CONSISTENCY: Do not simultaneously describe the same element as "
+        "both present and absent. If uncertain, state the limitation explicitly "
+        "rather than making a definitive claim.\n"
+        "3. Only report elements as absent if you are confident they are "
+        "structurally missing — not merely invisible due to plain-text "
+        "extraction.\n\n"
         "Output: A Markdown report with two sections:\n"
-        "- **Missing Elements in Tables/Figures** (numbered list)\n"
+        "- **Missing Elements in Tables/Figures** (numbered list — only items "
+        "you are confident are structurally absent)\n"
         "- **Formatting Inconsistencies** (numbered list)"
     ),
     6: (
@@ -132,14 +153,22 @@ _AGENT_TASKS = {
         "desk-reject triggers and methodology requirements defined in the journal "
         "profile provided (if any). If no profile is provided, apply top-tier "
         "general medical journal standards.\n\n"
-        "Output a Markdown report with six parts:\n"
+        "You have also been given the outputs of Agents 1–5 above. Use these to "
+        "inform your synthesis in Part 7.\n\n"
+        "Output a Markdown report with seven parts:\n"
         "**Part 1 — Central Contribution Rating** (1–10 scale with justification)\n"
         "**Part 2 — Methodological Credibility** (key strengths and fatal flaws)\n"
         "**Part 3 — Required / Suggested Analyses** (numbered list)\n"
         "**Part 4 — Literature Positioning** (how paper fits existing evidence)\n"
         "**Part 5 — Recommendation** (one of: Send to referees / Major revision / "
         "Desk reject) with one-paragraph justification\n"
-        "**Part 6 — Questions to Authors** (4–7 rigorous questions)"
+        "**Part 6 — Questions to Authors** (4–7 rigorous questions)\n"
+        "**Part 7 — Priority Action Items** (synthesised from ALL agent outputs "
+        "above, including your own evaluation): Triage all issues into three "
+        "groups — **Critical** (must fix before any referee sees this), "
+        "**Major** (must address in revision), **Minor** (should address). "
+        "Each item must state which domain it comes from (e.g. Style, "
+        "Statistics, Clinical Claims). This section must never be empty."
     ),
 }
 
@@ -149,6 +178,7 @@ def build_prompt(
     manuscript_text: str,
     kb: dict[str, str],
     journal_profile_text: str = "",
+    previous_outputs: list[str] | None = None,
 ) -> str:
     """Build the full prompt for a given agent."""
     role = _AGENT_ROLES[agent_num]
@@ -183,10 +213,24 @@ def build_prompt(
             "## SAMPL Guidelines\n\n" + kb.get("sampl", "")
         )
 
-    elif agent_num == 6 and journal_profile_text:
-        sections.append(
-            "## Target Journal Profile\n\n" + journal_profile_text
-        )
+    elif agent_num == 6:
+        if journal_profile_text:
+            sections.append(
+                "## Target Journal Profile\n\n" + journal_profile_text
+            )
+        if previous_outputs:
+            agent_names = [
+                "Agent 1 — Medical Style & Grammar",
+                "Agent 2 — Internal Consistency & PICO",
+                "Agent 3 — Clinical Claims & Causality",
+                "Agent 4 — Biostatistics & Methodology",
+                "Agent 5 — Tables, Figures & Documentation",
+            ]
+            blocks = "\n\n---\n\n".join(
+                f"### {agent_names[i]}\n\n{out.strip()}"
+                for i, out in enumerate(previous_outputs)
+            )
+            sections.append("## Previous Agent Outputs\n\n" + blocks)
 
     # ---- Manuscript ----
     sections.append("## Manuscript\n\n" + manuscript_text)
@@ -273,6 +317,7 @@ def run_all_agents(
             manuscript_text,
             kb,
             journal_profile_text if agent_num == 6 else "",
+            outputs if agent_num == 6 else None,
         )
         result = run_agent(agent_num, prompt, model=model, verbose=verbose)
         outputs.append(result)

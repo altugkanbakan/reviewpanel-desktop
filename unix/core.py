@@ -82,7 +82,7 @@ def build_report(
         "",
         "## Overall Assessment",
         "",
-        "> *See Priority Action Items section at the end for the consolidated triage.*",
+        "> *See Agent 6 — Part 7: Priority Action Items for the consolidated triage.*",
         "",
         "---",
         "",
@@ -98,24 +98,6 @@ def build_report(
             "",
         ]
 
-    lines += [
-        "## Priority Action Items",
-        "",
-        "*(Synthesised from all 6 agent reviews above)*",
-        "",
-        "### Critical",
-        "",
-        "<!-- Reviewer: list critical items here -->",
-        "",
-        "### Major",
-        "",
-        "<!-- Reviewer: list major items here -->",
-        "",
-        "### Minor",
-        "",
-        "<!-- Reviewer: list minor items here -->",
-        "",
-    ]
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
     return output_path
