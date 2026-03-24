@@ -5,14 +5,10 @@ a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[
-        ('llmfit.exe', '.'),
+        ('llmfit.exe', '.'),   # bundled hardware-check tool (windows binary)
     ],
     datas=[('knowledge_base', 'knowledge_base')],
-    hiddenimports=[
-        'customtkinter',
-        'PIL',
-        'PIL._tkinter_finder',
-    ],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
