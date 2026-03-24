@@ -11,12 +11,7 @@ echo.
 echo Building executable...
 echo.
 
-python -m PyInstaller ^
-  --onefile ^
-  --noconsole ^
-  --name "ReviewPanel" ^
-  --add-data "knowledge_base;knowledge_base" ^
-  gui.py
+python -m PyInstaller ReviewPanel.spec --noconfirm
 
 echo.
 if exist dist\ReviewPanel.exe (
