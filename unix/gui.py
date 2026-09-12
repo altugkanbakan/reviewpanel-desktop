@@ -1142,10 +1142,21 @@ class ReviewApp(ctk.CTk):
                 if pc is not None:
                     done_line += f" · prompt {pc:,} tok"
                 log(done_line + ")")
-                if pc is not None and est_tokens:
-                    reuse = max(0.0, 1.0 - pc / est_tokens) * 100
-                    log(f"  Prefill: {pc:,} of ~{est_tokens:,} est. prompt "
-                        f"tokens (~{reuse:.0f}% reused from prefix cache)")
+                # Ollama reports prompt_eval_count for the whole prompt even
+                # when the prefix KV cache spares it the work, so the count
+                # says nothing about reuse — the duration does. Measured on a
+                # 30 KB manuscript: 5.1s of prefill became 0.3s once agents
+                # shared a prefix, at an unchanged token count.
+                pd = stats.get("prompt_eval_duration")
+                if pc and pd:
+                    secs = pd / 1e9
+                    rate = pc / secs
+                    # Cold prefill measured ~1,300 tok/s on a 6 GB laptop GPU;
+                    # a cache hit came back at ~23,000. Anything this fast did
+                    # not recompute the prompt.
+                    hit = "  ← prefix cache hit" if rate > 5000 else ""
+                    log(f"  Prefill: {pc:,} tok in {secs:.1f}s "
+                        f"({rate:,.0f} tok/s){hit}")
                 agent_stats.append({
                     "agent": num,
                     "seconds": elapsed,
