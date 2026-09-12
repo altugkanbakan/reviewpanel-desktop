@@ -1,14 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Linux build spec — produces a single ReviewPanel binary
+# Sources live in ../src; the llmfit helper is downloaded next to this spec
+# by build_linux.sh / CI (gitignored). SPECPATH = directory of this spec.
+
+import os
+
+SRC = os.path.abspath(os.path.join(SPECPATH, '..', 'src'))
 
 a = Analysis(
-    ['gui.py'],
-    pathex=[],
+    [os.path.join(SRC, 'gui.py')],
+    pathex=[SRC],
     binaries=[
-        ('llmfit', '.'),   # bundled hardware-check tool (linux binary)
+        # bundled hardware-check tool (linux binary)
+        (os.path.join(SPECPATH, 'llmfit'), '.'),
     ],
     datas=[
-        ('knowledge_base', 'knowledge_base'),
+        # Destination MUST stay 'knowledge_base' — core.resource_path()
+        # resolves sys._MEIPASS/knowledge_base at runtime.
+        (os.path.join(SRC, 'knowledge_base'), 'knowledge_base'),
     ],
     hiddenimports=[
         'customtkinter',

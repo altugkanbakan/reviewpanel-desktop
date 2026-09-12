@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build_mac.sh — Build ReviewPanel.app for macOS
-# Run from the ReviewPanel-Unix directory on a Mac.
+# Sources live in ../src; this script always runs from packaging/.
 set -e
+cd "$(dirname "$0")"
 
 LLMFIT_VER="v0.8.0"
 ARCH=$(uname -m)   # arm64 or x86_64
@@ -34,7 +35,7 @@ echo ""
 
 # 2. Python dependencies
 echo "[2/4] Installing Python dependencies…"
-pip install -r requirements.txt --quiet
+pip install -r ../requirements.txt --quiet
 echo ""
 
 # 3. PyInstaller build
