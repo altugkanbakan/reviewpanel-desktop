@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -91,3 +92,25 @@ def open_path(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+# ---------------------------------------------------------------------------
+# User-level cache directory
+# ---------------------------------------------------------------------------
+
+def cache_dir() -> Path:
+    """
+    Per-user root for the persistent agent-output cache. Lives at the
+    platform's conventional cache location — never next to the manuscript —
+    so a review still hits the cache after the manuscript file is moved,
+    and manuscript folders stay clean.
+    """
+    if IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA")
+        root = Path(base) if base else Path.home() / "AppData" / "Local"
+        return root / "ReviewPanel" / "cache"
+    if IS_MAC:
+        return Path.home() / "Library" / "Caches" / "ReviewPanel"
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    return root / "reviewpanel"

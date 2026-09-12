@@ -24,13 +24,13 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from agents import (
-    _CTX_RESERVE, _NUM_CTX, _estimate_tokens, build_prompt,
+    _CTX_RESERVE, _NUM_CTX, _estimate_tokens, PROMPT_VERSION, build_prompt,
     load_knowledge_base, plan_context, prepare_agent6_prompt, run_agent,
     verify_knowledge_base,
 )
 from core import (
-    KNOWN_JOURNALS, KB_BASE, __version__, build_report, clear_checkpoints,
-    load_checkpoints, load_journal_profile, save_checkpoint,
+    KNOWN_JOURNALS, KB_BASE, __version__, build_report, cache_evict,
+    cache_key, cache_save, load_cached_outputs, load_journal_profile,
 )
 from manuscript import discover_manuscript
 from platforms import (
@@ -1151,16 +1151,25 @@ class ReviewApp(ctk.CTk):
             messagebox.showerror("Could not load manuscript", str(exc))
             return
 
-        # Ask about resume on the main thread, before the review thread starts.
-        restored = load_checkpoints(manuscript_data, model)
-        if restored and not messagebox.askyesno(
-            "Resume previous review?",
-            f"Found {len(restored)} completed agent(s) from a previous run "
-            "of this manuscript with the same model.\n\n"
-            "Resume and skip the already-completed agents?",
+        # Ask about cached outputs on the main thread, before the review
+        # thread starts. The cache is content-addressed (manuscript, model,
+        # KB, prompt version, upstream outputs), so a hit is exactly the
+        # output this run would produce — reusing it only skips LLM calls.
+        kb = load_knowledge_base()
+        journal_profile_text = load_journal_profile(journal, KB_BASE)
+        cached = load_cached_outputs(
+            manuscript_data, model, kb, PROMPT_VERSION, journal_profile_text,
+        )
+        if cached and not messagebox.askyesno(
+            "Reuse cached agent outputs?",
+            f"Found {len(cached)} of 6 agent output(s) in the cache from a "
+            "previous run of this manuscript (same model, knowledge base "
+            "and prompts).\n\nReuse them and skip those LLM calls?",
         ):
-            clear_checkpoints(manuscript_data)
-            restored = {}
+            # Skip the cache for this run only. Entries are NOT deleted —
+            # they may still serve other manuscripts or runs; this run's
+            # fresh outputs simply overwrite the same keys.
+            cached = {}
 
         self._review_running = True
         self._run_btn.configure(state="disabled")
@@ -1187,12 +1196,12 @@ class ReviewApp(ctk.CTk):
 
         threading.Thread(
             target=self._thread_run,
-            args=(manuscript_data, journal, model, restored),
+            args=(manuscript_data, journal, model, cached),
             daemon=True,
         ).start()
 
     def _thread_run(self, manuscript_data: dict, journal: str, model: str,
-                    restored: dict[int, str]):
+                    cached: dict[int, str]):
         q = self._log_queue
 
         def log(msg: str):
@@ -1218,6 +1227,14 @@ class ReviewApp(ctk.CTk):
             else:
                 log("  Using top-medical standards (no specific journal profile)")
             log("")
+
+            # Bound the on-disk cache once per run. Best-effort and on the
+            # worker thread, so it can never block the GUI, and a failure
+            # inside cache_evict() never stops the review.
+            evicted = cache_evict()
+            if evicted:
+                log(f"  Cache: removed {evicted} expired/oldest entries")
+                log("")
 
             log("[Phase 2] Checking Ollama connection …")
             if not _ensure_ollama_serve(log):
@@ -1259,12 +1276,12 @@ class ReviewApp(ctk.CTk):
             for num in range(1, 7):
                 self._current_agent = num
                 q.put(("agent_start", num))
-                if num in restored:
-                    result = restored[num]
+                if num in cached:
+                    result = cached[num]
                     agent_outputs.append(result)
                     agent_stats.append({"agent": num, "restored": True})
                     q.put(("agent_done", num))
-                    log(f"[{num}/6] Restored from checkpoint ({len(result):,} chars)")
+                    log(f"[{num}/6] Reused from cache ({len(result):,} chars)")
                     log("")
                     continue
                 log(f"[{num}/6] Agent {num}: {_AGENT_NAMES[num]} …")
@@ -1299,10 +1316,24 @@ class ReviewApp(ctk.CTk):
                 )
                 elapsed = time.time() - t0
                 agent_outputs.append(result)
-                save_checkpoint(manuscript_data, model, num, result)
+                # Agent 6's key must cover the five upstream outputs (and
+                # the journal profile) its prompt embedded — see cache_key.
+                if num == 6:
+                    key = cache_key(
+                        manuscript_data, 6, model, kb, PROMPT_VERSION,
+                        journal_profile_text, agent_outputs[:5],
+                    )
+                else:
+                    key = cache_key(
+                        manuscript_data, num, model, kb, PROMPT_VERSION,
+                    )
+                cache_save(
+                    key, result, manuscript_data=manuscript_data,
+                    model=model, agent_num=num, prompt_version=PROMPT_VERSION,
+                )
                 q.put(("agent_done", num))
                 durations.append(elapsed)
-                left = [k for k in range(num + 1, 7) if k not in restored]
+                left = [k for k in range(num + 1, 7) if k not in cached]
                 if left:
                     eta = sum(durations) / len(durations) * len(left)
                     q.put(("eta", _fmt_eta(eta)))
@@ -1361,7 +1392,6 @@ class ReviewApp(ctk.CTk):
                     "agents": agent_stats,
                 },
             )
-            clear_checkpoints(manuscript_data)
             total = time.time() - review_start
             mins, secs = divmod(int(total), 60)
             if total_prefill or total_gen:

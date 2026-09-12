@@ -69,6 +69,14 @@ def verify_knowledge_base() -> list[str]:
 # Prompt builders
 # ---------------------------------------------------------------------------
 
+# Version stamp of the prompt templates below. core.cache_key() mixes this
+# into every cache key, so BUMP IT BY HAND whenever _AGENT_ROLES,
+# _AGENT_TASKS or the structure build_prompt() emits changes in any way
+# that alters the text sent to the model — otherwise outputs generated
+# with the old prompts would be served from the cache as if the new
+# prompts had produced them: a silent, hard-to-spot corruption.
+PROMPT_VERSION = 1
+
 _AGENT_ROLES = {
     1: "strict copy editor",
     2: "technical reviewer",

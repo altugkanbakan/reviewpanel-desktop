@@ -1,14 +1,18 @@
 """
-core.py — Shared constants, journal profile loader, and report builder.
+core.py — Shared constants, journal profile loader, persistent
+agent-output cache, and report builder.
 """
 
 import hashlib
 import json
 import logging
-import shutil
+import os
 import sys
-from datetime import date
+import time
+from datetime import date, datetime
 from pathlib import Path
+
+from platforms import cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -60,102 +64,262 @@ def load_journal_profile(journal: str, kb_base: Path = KB_BASE) -> str:
         return ""
 
 # ---------------------------------------------------------------------------
-# Agent checkpoints  (crash recovery for long-running reviews)
+# Persistent agent-output cache  (content-addressed, user-level)
+#
+# One mechanism serves both crash recovery ("resume this run") and reuse
+# across runs: every finished agent output is stored on disk under a key
+# derived from everything that determines that output. Same inputs -> same
+# key -> hit; any change to the manuscript, model, knowledge base, prompt
+# templates or (for Agent 6) the upstream material misses cleanly.
+#
+# Key schema — sha256 over newline-joined components (every component is a
+# hex digest or a short token, so components cannot bleed into each other):
+#
+#   scheme tag
+#   sha256(manuscript full_text)
+#   agent_num
+#   model
+#   sha256(knowledge-base contents)
+#   prompt_version     (agents.PROMPT_VERSION, bumped by hand)
+#   aux                ("" for agents 1-5; for Agent 6 a digest over the
+#                       journal profile + the five upstream outputs IN
+#                       ORDER, because its prompt embeds them — a synthesis
+#                       built from different upstream outputs or another
+#                       target journal must never be reused)
+#
+# Layout: <cache_dir()>/<key>.md (the output) + <key>.json (metadata for
+# diagnosis: agent, model, created, prompt_version, manuscript hash, title).
 # ---------------------------------------------------------------------------
 
-_CHECKPOINT_DIRNAME = ".reviewpanel_checkpoints"
+_CACHE_SCHEME = "reviewpanel-cache-v1"
+
+# Eviction limits — the cache must not grow without bound. Entries older
+# than _CACHE_MAX_AGE_DAYS go first, then the least-recently-used (cache
+# hits touch mtime) until the total size is back under _CACHE_MAX_BYTES.
+# 500 MB is on the order of ten thousand agent outputs (~10-50 KB each),
+# far more than anyone revisits, and 60 days outlives a revision cycle.
+_CACHE_MAX_BYTES = 500 * 1024 * 1024
+_CACHE_MAX_AGE_DAYS = 60
 
 
-def _checkpoint_dir(manuscript_data: dict) -> Path:
-    """Hidden per-manuscript checkpoint folder next to the manuscript."""
-    source = Path(manuscript_data["source_path"])
-    return source.parent / _CHECKPOINT_DIRNAME / source.stem
+def _cache_root() -> Path:
+    """Cache root folder (single indirection point; tests may repoint it)."""
+    return cache_dir()
 
 
 def manuscript_hash(manuscript_data: dict) -> str:
-    """SHA-256 of the manuscript full text (checkpoint validity key)."""
+    """SHA-256 of the manuscript full text (cache-key component)."""
     text = manuscript_data["full_text"]
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
-def save_checkpoint(
-    manuscript_data: dict, model: str, agent_num: int, output: str
+def kb_content_hash(kb: dict[str, str]) -> str:
+    """
+    SHA-256 over the loaded knowledge-base contents (key-order independent).
+    Editing any KB file changes this and invalidates prior cached outputs.
+    """
+    h = hashlib.sha256()
+    for key in sorted(kb):
+        h.update(hashlib.sha256(key.encode("utf-8", errors="replace")).digest())
+        h.update(
+            hashlib.sha256(kb[key].encode("utf-8", errors="replace")).digest()
+        )
+    return h.hexdigest()
+
+
+def cache_key(
+    manuscript_data: dict,
+    agent_num: int,
+    model: str,
+    kb: dict[str, str],
+    prompt_version: int,
+    journal_profile_text: str = "",
+    previous_outputs: list[str] | None = None,
+) -> str:
+    """
+    Content-addressed key for one agent's output (schema documented above).
+    Agent 6 REQUIRES previous_outputs (agents 1-5, in order): its prompt
+    embeds them, so leaving them out of the key would silently reuse a
+    synthesis of different upstream outputs.
+    """
+    if agent_num == 6:
+        if previous_outputs is None:
+            raise ValueError(
+                "cache_key: Agent 6 requires previous_outputs (agents 1-5)"
+            )
+        aux_h = hashlib.sha256()
+        aux_h.update(
+            hashlib.sha256(
+                journal_profile_text.encode("utf-8", errors="replace")
+            ).digest()
+        )
+        for out in previous_outputs:
+            aux_h.update(
+                hashlib.sha256(out.encode("utf-8", errors="replace")).digest()
+            )
+        aux = aux_h.hexdigest()
+    else:
+        aux = ""
+    material = "\n".join([
+        _CACHE_SCHEME,
+        manuscript_hash(manuscript_data),
+        str(agent_num),
+        model,
+        kb_content_hash(kb),
+        str(prompt_version),
+        aux,
+    ])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def cache_save(
+    key: str,
+    output: str,
+    *,
+    manuscript_data: dict,
+    model: str,
+    agent_num: int,
+    prompt_version: int,
 ) -> None:
     """
-    Persist one agent's output to disk. Best-effort: any failure is logged
-    and swallowed so checkpointing can never abort a running review.
+    Persist one agent's output as <key>.md + <key>.json in the user-level
+    cache. Best-effort: any failure is logged and swallowed so caching can
+    never abort a running review.
     """
     try:
-        ckpt_dir = _checkpoint_dir(manuscript_data)
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
-        meta_path = ckpt_dir / "meta.json"
+        root = _cache_root()
+        root.mkdir(parents=True, exist_ok=True)
         meta = {
-            "manuscript_sha256": manuscript_hash(manuscript_data),
+            "agent_num": agent_num,
             "model": model,
-            "version": __version__,
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "prompt_version": prompt_version,
+            "manuscript_sha256": manuscript_hash(manuscript_data),
+            "title": str(manuscript_data.get("title", ""))[:120],
         }
-        stale = True
-        if meta_path.exists():
+        (root / f"{key}.md").write_text(output, encoding="utf-8")
+        (root / f"{key}.json").write_text(
+            json.dumps(meta, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning("Could not cache output of agent %d: %s", agent_num, e)
+
+
+def cache_load(key: str) -> str | None:
+    """
+    Return the cached output for key, or None on a miss. Best-effort: any
+    I/O error is a miss. A hit touches both files' mtime so eviction sees
+    recently reused entries as fresh (LRU).
+    """
+    try:
+        path = _cache_root() / f"{key}.md"
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8", errors="replace")
+        now = time.time()
+        for p in (path, path.with_suffix(".json")):
             try:
-                old = json.loads(
-                    meta_path.read_text(encoding="utf-8", errors="replace")
-                )
-                stale = (
-                    old.get("manuscript_sha256") != meta["manuscript_sha256"]
-                    or old.get("model") != meta["model"]
-                )
-            except Exception:
-                stale = True
-        if stale:
-            # Manuscript edited or model changed: drop the previous run's
-            # agent files so a later resume can never mix two runs' outputs.
-            for old_file in ckpt_dir.glob("agent_*.md"):
-                old_file.unlink(missing_ok=True)
-            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        path = ckpt_dir / f"agent_{agent_num}.md"
-        path.write_text(output, encoding="utf-8")
+                os.utime(p, (now, now))
+            except OSError:
+                pass
+        return text
     except Exception as e:
-        logger.warning("Could not save checkpoint for agent %d: %s", agent_num, e)
+        logger.warning("Cache read failed (%s…): %s", key[:12], e)
+        return None
 
 
-def load_checkpoints(manuscript_data: dict, model: str) -> dict[int, str]:
+def load_cached_outputs(
+    manuscript_data: dict,
+    model: str,
+    kb: dict[str, str],
+    prompt_version: int,
+    journal_profile_text: str = "",
+) -> dict[int, str]:
     """
-    Return {agent_num: output} for completed checkpoints matching this
-    manuscript (by content hash) and model. Returns {} when nothing valid
-    exists; a stale hash or different model silently invalidates them.
+    Return {agent_num: output} for every agent whose output for these
+    exact inputs is already cached. Agent 6 is looked up only when agents
+    1-5 all hit, because its key depends on their outputs (in order).
     """
+    found: dict[int, str] = {}
     try:
-        ckpt_dir = _checkpoint_dir(manuscript_data)
-        meta_path = ckpt_dir / "meta.json"
-        if not meta_path.exists():
-            return {}
-        meta = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
-        if meta.get("manuscript_sha256") != manuscript_hash(manuscript_data):
-            return {}
-        if meta.get("model") != model:
-            return {}
-        found: dict[int, str] = {}
-        for n in range(1, 7):
-            path = ckpt_dir / f"agent_{n}.md"
-            if path.exists():
-                found[n] = path.read_text(encoding="utf-8", errors="replace")
-        return found
+        for n in range(1, 6):
+            out = cache_load(
+                cache_key(manuscript_data, n, model, kb, prompt_version)
+            )
+            if out is not None:
+                found[n] = out
+        if len(found) == 5:
+            out = cache_load(cache_key(
+                manuscript_data, 6, model, kb, prompt_version,
+                journal_profile_text, [found[n] for n in range(1, 6)],
+            ))
+            if out is not None:
+                found[6] = out
     except Exception as e:
-        logger.warning("Could not read checkpoints: %s", e)
-        return {}
+        logger.warning("Cache lookup failed: %s", e)
+    return found
 
 
-def clear_checkpoints(manuscript_data: dict) -> None:
-    """Delete this manuscript's checkpoint folder (best-effort)."""
+def cache_evict(
+    max_bytes: int = _CACHE_MAX_BYTES,
+    max_age_days: int = _CACHE_MAX_AGE_DAYS,
+) -> int:
+    """
+    Bound the cache: delete entries older than max_age_days, then the
+    least-recently-used (by mtime; hits refresh it) until the total size
+    is under max_bytes. Returns the number of entries removed. Best-effort
+    — callers run it at most once per review, off the main thread, and a
+    failure must never stop the review.
+    """
+    removed = 0
     try:
-        ckpt_dir = _checkpoint_dir(manuscript_data)
-        if ckpt_dir.exists():
-            shutil.rmtree(ckpt_dir)
-        base = ckpt_dir.parent
-        if base.exists() and not any(base.iterdir()):
-            base.rmdir()
+        root = _cache_root()
+        if not root.exists():
+            return 0
+        entries: list[tuple[float, int, list[Path]]] = []
+        for md in root.glob("*.md"):
+            meta = md.with_suffix(".json")
+            paths = [md] + ([meta] if meta.exists() else [])
+            try:
+                mtime = md.stat().st_mtime
+                size = sum(p.stat().st_size for p in paths)
+            except OSError:
+                continue
+            entries.append((mtime, size, paths))
+        for meta in root.glob("*.json"):
+            # Orphaned metadata (interrupted write / partial eviction).
+            if not meta.with_suffix(".md").exists():
+                try:
+                    meta.unlink()
+                except OSError:
+                    pass
+
+        def _drop(entry: tuple[float, int, list[Path]]) -> None:
+            nonlocal removed
+            for p in entry[2]:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            removed += 1
+
+        entries.sort(key=lambda e: e[0])           # oldest first
+        cutoff = time.time() - max_age_days * 86400
+        keep: list[tuple[float, int, list[Path]]] = []
+        for entry in entries:
+            if entry[0] < cutoff:
+                _drop(entry)
+            else:
+                keep.append(entry)
+        total = sum(e[1] for e in keep)
+        for entry in keep:                          # still oldest first
+            if total <= max_bytes:
+                break
+            _drop(entry)
+            total -= entry[1]
     except Exception as e:
-        logger.warning("Could not clear checkpoints: %s", e)
+        logger.warning("Cache eviction failed: %s", e)
+    return removed
 
 # ---------------------------------------------------------------------------
 # Report builder
@@ -226,7 +390,7 @@ def _format_run_stats(run_stats: dict) -> list[str]:
         for a in agents:
             if a.get("restored"):
                 lines.append(
-                    f"| {a.get('agent', '?')} | — | — | — | (checkpoint) |"
+                    f"| {a.get('agent', '?')} | — | — | — | (cache) |"
                 )
                 continue
             secs = a.get("seconds")
