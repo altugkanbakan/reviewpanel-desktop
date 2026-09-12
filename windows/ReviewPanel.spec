@@ -8,7 +8,11 @@ a = Analysis(
         ('llmfit.exe', '.'),   # bundled hardware-check tool (windows binary)
     ],
     datas=[('knowledge_base', 'knowledge_base')],
-    hiddenimports=[],
+    hiddenimports=[
+        'customtkinter',
+        'PIL',
+        'PIL._tkinter_finder',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

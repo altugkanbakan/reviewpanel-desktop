@@ -50,7 +50,8 @@ app = BUNDLE(
     bundle_identifier='com.altugkanbakan.reviewpanel',
     info_plist={
         'CFBundleDisplayName': 'Review Panel',
-        'CFBundleShortVersionString': '2.0',
+        # Version source: core.py::__version__ — update together when bumping.
+        'CFBundleShortVersionString': '2.1.1',
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,   # allows dark mode
     },

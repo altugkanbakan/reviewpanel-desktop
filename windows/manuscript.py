@@ -8,7 +8,10 @@ from pathlib import Path
 
 def read_file(path: str | Path) -> str:
     """Read a plain-text file as UTF-8."""
-    return Path(path).read_text(encoding="utf-8", errors="replace")
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        raise ValueError(f"Could not read file {path}: {e}") from e
 
 
 def read_docx(path: str | Path) -> str:
@@ -20,7 +23,14 @@ def read_docx(path: str | Path) -> str:
             "python-docx is required to read .docx files.\n"
             "Install it with:  pip install python-docx"
         )
-    doc = Document(str(path))
+    try:
+        doc = Document(str(path))
+    except Exception as e:
+        raise ValueError(
+            f"Could not read .docx file {path}: {e}\n"
+            "The file may be corrupted, password-protected, or not a valid "
+            "Word document."
+        ) from e
     return "\n".join(p.text for p in doc.paragraphs)
 
 
@@ -99,12 +109,15 @@ def discover_manuscript(file_path: str | None = None) -> dict:
     suffix = main_file.suffix.lower()
 
     # ---- Read content ----
-    if suffix == ".tex":
-        full_text = read_tex_recursive(main_file)
-    elif suffix == ".docx":
-        full_text = read_docx(main_file)
-    else:
-        full_text = read_file(main_file)
+    try:
+        if suffix == ".tex":
+            full_text = read_tex_recursive(main_file)
+        elif suffix == ".docx":
+            full_text = read_docx(main_file)
+        else:
+            full_text = read_file(main_file)
+    except OSError as e:
+        raise ValueError(f"Could not read manuscript {main_file}: {e}") from e
 
     # ---- Derive title ----
     title = _extract_title(full_text, suffix) or main_file.stem

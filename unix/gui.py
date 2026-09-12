@@ -5,7 +5,9 @@ Entry point: run this file or the compiled ReviewPanel binary / .app
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import os
 import platform
 import queue
@@ -21,9 +23,32 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from agents import build_prompt, load_knowledge_base, run_agent
-from core import KNOWN_JOURNALS, KB_BASE, build_report, load_journal_profile
+from agents import _NUM_CTX, _estimate_tokens, build_prompt, load_knowledge_base, run_agent
+from core import (
+    KNOWN_JOURNALS, KB_BASE, __version__, build_report, clear_checkpoints,
+    load_checkpoints, load_journal_profile, save_checkpoint,
+)
 from manuscript import discover_manuscript
+
+# ---------------------------------------------------------------------------
+# Frozen-build safety — in a windowed (console=False) build sys.stdout and
+# sys.stderr are None; give them harmless buffers so print() cannot crash,
+# and route warnings from core/agents into a log file instead.
+# ---------------------------------------------------------------------------
+
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
+
+try:
+    logging.basicConfig(
+        filename=str(Path.home() / "reviewpanel.log"),
+        level=logging.WARNING,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    )
+except Exception:
+    pass  # logging setup must never crash the app
 
 # ---------------------------------------------------------------------------
 # Theme & constants
@@ -58,6 +83,8 @@ _AGENT_QUIPS = {
     5: ["Inspecting Table 1…", "Checking figure labels…", "Looking for missing legends…"],
     6: ["Channeling a demanding associate editor…", "Weighing clinical impact…", "Desk reject or not?…"],
 }
+
+_SUPPORTED_EXTS = (".tex", ".md", ".docx", ".txt")
 
 # ---------------------------------------------------------------------------
 # Helpers — llmfit
@@ -582,7 +609,7 @@ class AboutWindow(ctk.CTkToplevel):
             command=lambda: webbrowser.open("https://www.linkedin.com/in/drkanbakan/"),
         ).pack(side="left", padx=6)
 
-        ctk.CTkLabel(self, text="v2.1", text_color="gray40",
+        ctk.CTkLabel(self, text=f"v{__version__}", text_color="gray40",
                      font=ctk.CTkFont(size=11)).pack(pady=(20, 0))
 
 
@@ -600,12 +627,16 @@ class ReviewApp(ctk.CTk):
         self._log_queue: queue.Queue = queue.Queue()
         self._report_path: str | None = None
         self._ticker_running = False
+        self._review_running = False
         self._current_agent  = 0
         self._quip_index     = 0
 
         self._build_ui()
         self._poll_queue()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         threading.Thread(target=self._startup_checks, daemon=True).start()
+        # Populate the model list from Ollama in the background (no GUI freeze)
+        self._refresh_models(quiet=True)
 
     def _build_ui(self):
         # ---- Top bar ----
@@ -619,11 +650,12 @@ class ReviewApp(ctk.CTk):
             text_color=ACCENT,
         ).pack(side="left", padx=12)
 
-        ctk.CTkButton(
+        self._hw_btn = ctk.CTkButton(
             topbar, text="Hardware Check", width=140, height=30,
             fg_color="gray30", hover_color="gray40",
             command=self._open_hw_check,
-        ).pack(side="right", padx=8, pady=8)
+        )
+        self._hw_btn.pack(side="right", padx=8, pady=8)
 
         ctk.CTkButton(
             topbar, text="ℹ  About", width=90, height=30,
@@ -675,14 +707,16 @@ class ReviewApp(ctk.CTk):
             values=self._build_model_list(), width=210,
         )
         self._model_combo.pack(side="left", padx=(0, 6))
-        ctk.CTkButton(model_row, text="⟳", width=30,
-                      command=self._refresh_models).pack(side="left")
+        self._refresh_btn = ctk.CTkButton(model_row, text="⟳", width=30,
+                                          command=self._refresh_models)
+        self._refresh_btn.pack(side="left")
 
-        ctk.CTkButton(
+        self._pull_btn = ctk.CTkButton(
             left, text="⬇  Pull Model", height=32,
             fg_color="gray30", hover_color="gray40",
             command=self._pull_current_model,
-        ).pack(fill="x", padx=16, pady=(4, 0))
+        )
+        self._pull_btn.pack(fill="x", padx=16, pady=(4, 0))
 
         self._hw_label = ctk.CTkLabel(
             left, text="", text_color="gray",
@@ -747,16 +781,41 @@ class ReviewApp(ctk.CTk):
             text_color="gray", font=ctk.CTkFont(size=11),
         ).pack(anchor="w", padx=16, pady=(0, 12))
 
-    def _build_model_list(self) -> list[str]:
-        pulled   = _ollama_models()
+    def _build_model_list(self, pulled: list[str] | None = None) -> list[str]:
+        pulled   = pulled or []
         defaults = ["qwen2.5:7b", "qwen2.5:3b", "llama3.2:3b",
                     "gemma3:4b", "llama3.1:8b", "mistral:7b", "qwen2.5:14b"]
         return pulled + [m for m in defaults if m not in pulled] or ["qwen2.5:7b"]
 
-    def _refresh_models(self):
-        values = self._build_model_list()
+    def _refresh_models(self, quiet: bool = False):
+        """Fetch the pulled-model list in a worker thread (GUI never blocks)."""
+        self._refresh_btn.configure(state="disabled")
+        threading.Thread(
+            target=self._thread_refresh_models, args=(quiet,), daemon=True,
+        ).start()
+
+    def _thread_refresh_models(self, quiet: bool):
+        try:
+            import ollama
+            data = ollama.list()
+            pulled = [m["model"] for m in data.get("models", [])]
+            error = None
+        except Exception as exc:
+            pulled = []
+            error = str(exc) or exc.__class__.__name__
+        self.after(0, lambda: self._apply_model_list(pulled, error, quiet))
+
+    def _apply_model_list(self, pulled: list[str], error: str | None, quiet: bool):
+        if not self._review_running:
+            self._refresh_btn.configure(state="normal")
+        values = self._build_model_list(pulled)
         self._model_combo.configure(values=values)
-        self._hw_label.configure(text=f"Refreshed. {len(values)} model(s) available.")
+        if quiet:
+            return
+        if error:
+            self._hw_label.configure(text=f"⚠ Could not reach Ollama: {error}")
+        else:
+            self._hw_label.configure(text=f"Refreshed. {len(values)} model(s) available.")
 
     def _pull_current_model(self):
         model = self._model_var.get().strip()
@@ -803,15 +862,20 @@ class ReviewApp(ctk.CTk):
         path = filedialog.askopenfilename(
             title="Select Manuscript",
             filetypes=[
-                ("Supported files", "*.md *.tex *.docx *.txt"),
-                ("Word Document", "*.docx"),
-                ("Markdown", "*.md"),
+                ("Supported files", "*.tex *.md *.docx *.txt"),
                 ("LaTeX", "*.tex"),
+                ("Markdown", "*.md"),
+                ("Word Document", "*.docx"),
                 ("Text", "*.txt"),
-                ("All files", "*.*"),
             ],
         )
         if path:
+            if Path(path).suffix.lower() not in _SUPPORTED_EXTS:
+                messagebox.showwarning(
+                    "Unsupported file type",
+                    "Supported formats: .tex, .md, .docx, .txt — PDF is not supported.",
+                )
+                return
             self._file_var.set(path)
 
     def _append_log(self, text: str):
@@ -871,8 +935,42 @@ class ReviewApp(ctk.CTk):
         journal   = self._journal_var.get()
         model     = self._model_var.get().strip() or "qwen2.5:7b"
 
+        if not file_path:
+            messagebox.showwarning(
+                "No manuscript selected",
+                "Please select a manuscript file before starting the review.",
+            )
+            return
+        if Path(file_path).suffix.lower() not in _SUPPORTED_EXTS:
+            messagebox.showwarning(
+                "Unsupported file type",
+                "Supported formats: .tex, .md, .docx, .txt — PDF is not supported.",
+            )
+            return
+
+        try:
+            manuscript_data = discover_manuscript(file_path)
+        except Exception as exc:
+            messagebox.showerror("Could not load manuscript", str(exc))
+            return
+
+        # Ask about resume on the main thread, before the review thread starts.
+        restored = load_checkpoints(manuscript_data, model)
+        if restored and not messagebox.askyesno(
+            "Resume previous review?",
+            f"Found {len(restored)} completed agent(s) from a previous run "
+            "of this manuscript with the same model.\n\n"
+            "Resume and skip the already-completed agents?",
+        ):
+            clear_checkpoints(manuscript_data)
+            restored = {}
+
+        self._review_running = True
         self._run_btn.configure(state="disabled")
         self._open_btn.configure(state="disabled")
+        self._hw_btn.configure(state="disabled")
+        self._refresh_btn.configure(state="disabled")
+        self._pull_btn.configure(state="disabled")
         self._progress.set(0)
         self._report_path   = None
         self._current_agent = 0
@@ -889,11 +987,12 @@ class ReviewApp(ctk.CTk):
 
         threading.Thread(
             target=self._thread_run,
-            args=(file_path, journal, model),
+            args=(manuscript_data, journal, model, restored),
             daemon=True,
         ).start()
 
-    def _thread_run(self, file_path: str | None, journal: str, model: str):
+    def _thread_run(self, manuscript_data: dict, journal: str, model: str,
+                    restored: dict[int, str]):
         q = self._log_queue
 
         def log(msg: str):
@@ -908,8 +1007,7 @@ class ReviewApp(ctk.CTk):
             log(f"  Platform: {platform.system()} {platform.machine()}")
             log("")
 
-            log("[Phase 1] Loading manuscript …")
-            manuscript_data = discover_manuscript(file_path)
+            log("[Phase 1] Manuscript loaded")
             log(f"  Title      : {manuscript_data['title']}")
             log(f"  Source     : {manuscript_data['source_path']}")
             log(f"  Characters : {len(manuscript_data['full_text']):,}")
@@ -936,15 +1034,28 @@ class ReviewApp(ctk.CTk):
             for num in range(1, 7):
                 self._current_agent = num
                 q.put(("agent_start", num))
+                if num in restored:
+                    result = restored[num]
+                    agent_outputs.append(result)
+                    q.put(("agent_done", num))
+                    log(f"[{num}/6] Restored from checkpoint ({len(result):,} chars)")
+                    log("")
+                    continue
                 log(f"[{num}/6] Agent {num}: {_AGENT_NAMES[num]} …")
                 t0     = time.time()
                 prompt = build_prompt(
                     num, manuscript_data["full_text"], kb,
                     journal_profile_text if num == 6 else "",
+                    agent_outputs if num == 6 else None,
                 )
+                est_tokens = _estimate_tokens(prompt)
+                if est_tokens > _NUM_CTX:
+                    log(f"  [WARN] Prompt ~{est_tokens:,} tokens exceeds "
+                        f"context window ({_NUM_CTX}); output may be truncated")
                 result  = run_agent(num, prompt, model=model, verbose=False)
                 elapsed = time.time() - t0
                 agent_outputs.append(result)
+                save_checkpoint(manuscript_data, model, num, result)
                 q.put(("agent_done", num))
                 log(f"[{num}/6] Done  ({len(result):,} chars, {elapsed:.0f}s)")
                 log("")
@@ -958,6 +1069,7 @@ class ReviewApp(ctk.CTk):
                 model=model,
                 output_dir=output_dir,
             )
+            clear_checkpoints(manuscript_data)
             total = time.time() - review_start
             mins, secs = divmod(int(total), 60)
             log(f"Report saved → {report_path}")
@@ -977,7 +1089,11 @@ class ReviewApp(ctk.CTk):
 
     def _on_finish(self, success: bool, error: str = ""):
         self._ticker_running = False
+        self._review_running = False
         self._run_btn.configure(state="normal")
+        self._hw_btn.configure(state="normal")
+        self._refresh_btn.configure(state="normal")
+        self._pull_btn.configure(state="normal")
         if success:
             self._status_var.set("✔  Done!  Report saved next to your manuscript.")
             self._open_btn.configure(state="normal")
@@ -985,6 +1101,15 @@ class ReviewApp(ctk.CTk):
         else:
             self._status_var.set("✗  Failed — see log for details.")
             messagebox.showerror("Review failed", error)
+
+    def _on_close(self):
+        if self._review_running:
+            if not messagebox.askyesno(
+                "Review in progress",
+                "A review is in progress. Quit anyway?",
+            ):
+                return
+        self.destroy()
 
     def _open_report(self):
         if self._report_path:

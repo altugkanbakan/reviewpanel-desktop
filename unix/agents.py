@@ -2,10 +2,14 @@
 agents.py — 6 agent prompt builders + Ollama runner
 """
 
-import sys
+import logging
+import time
 from pathlib import Path
 
+import httpx
 import ollama
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Knowledge-base loader
@@ -29,7 +33,7 @@ def load_knowledge_base() -> dict[str, str]:
         try:
             kb[key] = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            print(f"[WARNING] Could not load KB file {path}: {e}", file=sys.stderr)
+            logger.warning("Could not load KB file %s: %s", path, e)
             kb[key] = ""
     return kb
 
@@ -245,6 +249,25 @@ def build_prompt(
 # Ollama runner
 # ---------------------------------------------------------------------------
 
+# Per-request timeout in seconds. A single agent can legitimately take
+# 1–5 minutes on slow hardware, so be generous before giving up.
+_REQUEST_TIMEOUT = 900
+
+# How many retries after the first failed attempt (network/timeout errors).
+_MAX_RETRIES = 1
+
+# Seconds to wait before retrying.
+_RETRY_DELAY = 5
+
+# Fixed context window sent to Ollama (dynamic sizing planned for Phase 2).
+_NUM_CTX = 32768
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough heuristic token estimate (~4 characters per token)."""
+    return len(text) // 4
+
+
 def run_agent(
     agent_num: int,
     prompt: str,
@@ -254,19 +277,49 @@ def run_agent(
     """
     Send the prompt to Ollama and return the model's response text.
     Uses low temperature (0.3) for consistent structured Markdown output.
+    Retries once on network/timeout errors; raises RuntimeError (carrying
+    the agent number) if all attempts fail.
     """
+    est_tokens = _estimate_tokens(prompt)
+    if est_tokens > _NUM_CTX:
+        logger.warning(
+            "Agent %d: prompt ~%d tokens exceeds context window (%d); "
+            "output may be truncated",
+            agent_num, est_tokens, _NUM_CTX,
+        )
+
     if verbose:
         print(
             f"  [Agent {agent_num}] Sending prompt "
-            f"({len(prompt):,} chars) to {model} ...",
+            f"({len(prompt):,} chars, ~{est_tokens:,} tokens) to {model} ...",
             flush=True,
         )
 
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        options={"num_ctx": 32768, "temperature": 0.3},
-    )
+    client = ollama.Client(timeout=_REQUEST_TIMEOUT)
+    response = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"num_ctx": _NUM_CTX, "temperature": 0.3},
+            )
+            break
+        except (httpx.TransportError, ConnectionError) as exc:
+            if attempt < _MAX_RETRIES:
+                logger.warning(
+                    "Agent %d: Ollama request failed (%s) — retrying in %ds "
+                    "(attempt %d/%d)",
+                    agent_num, exc, _RETRY_DELAY,
+                    attempt + 1, _MAX_RETRIES + 1,
+                )
+                time.sleep(_RETRY_DELAY)
+            else:
+                raise RuntimeError(
+                    f"Agent {agent_num}: Ollama request failed after "
+                    f"{_MAX_RETRIES + 1} attempts: {exc}"
+                ) from exc
+
     content: str = response["message"]["content"]
 
     if verbose:
@@ -303,6 +356,8 @@ def run_all_agents(
     """
     Run all 6 agents sequentially (VRAM constraint).
     Returns a list of 6 response strings (index 0 = Agent 1).
+
+    Headless path; the GUI runs its own loop in gui.py::_thread_run.
     """
     kb = load_knowledge_base()
     outputs: list[str] = []

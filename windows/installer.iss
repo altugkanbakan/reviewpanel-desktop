@@ -3,7 +3,8 @@
 ; Run this AFTER build.bat has produced dist\ReviewPanel.exe
 
 #define AppName "Review Panel"
-#define AppVersion "2.0"
+; Version source: core.py::__version__ — update together when bumping.
+#define AppVersion "2.1.1"
 #define AppPublisher "altugkanbakan"
 #define AppExeName "ReviewPanel.exe"
 
