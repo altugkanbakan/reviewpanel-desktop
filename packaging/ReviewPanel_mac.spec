@@ -60,7 +60,7 @@ app = BUNDLE(
     info_plist={
         'CFBundleDisplayName': 'Review Panel',
         # Version source: src/core.py::__version__ — update together when bumping.
-        'CFBundleShortVersionString': '2.1.1',
+        'CFBundleShortVersionString': '2.1.2',
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,   # allows dark mode
     },
