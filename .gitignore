@@ -6,6 +6,8 @@ build/
 llmfit
 llmfit.exe
 llmfit_tmp.tar.gz
+llmfit_tmp.zip
 OllamaSetup.exe
 *.dmg
 .DS_Store
+.pytest_cache/

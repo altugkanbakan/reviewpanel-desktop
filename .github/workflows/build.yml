@@ -1,4 +1,4 @@
-name: Build Unix Binaries
+name: Test and Build
 
 on:
   push:
@@ -13,11 +13,12 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  LLMFIT_VERSION: v0.8.0
 
 jobs:
-  build-macos:
-    name: macOS Build
-    runs-on: macos-latest
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,15 +26,43 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt --quiet
+
+      - name: Run tests
+        run: pytest -q
+
+  build-macos:
+    name: macOS Build
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt --quiet
 
+      - name: Cache llmfit
+        id: llmfit-cache
+        uses: actions/cache@v4
+        with:
+          path: packaging/llmfit
+          key: llmfit-${{ env.LLMFIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: Download llmfit
+        if: steps.llmfit-cache.outputs.cache-hit != 'true'
         working-directory: packaging
         run: |
           ARCH=$(uname -m)
-          VER="v0.8.0"
+          VER="${LLMFIT_VERSION}"
           if [ "$ARCH" = "arm64" ]; then
             ASSET="llmfit-${VER}-aarch64-apple-darwin.tar.gz"
           else
@@ -41,8 +70,11 @@ jobs:
           fi
           curl -L "https://github.com/AlexsJones/llmfit/releases/download/${VER}/${ASSET}" -o llmfit_tmp.tar.gz
           tar -xzf llmfit_tmp.tar.gz --strip-components=1
-          chmod +x llmfit
           rm -f llmfit_tmp.tar.gz
+
+      - name: Make llmfit executable
+        working-directory: packaging
+        run: chmod +x llmfit
 
       - name: Build .app
         working-directory: packaging
@@ -72,6 +104,7 @@ jobs:
   build-linux:
     name: Linux Build
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +112,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y python3-tk
@@ -86,11 +120,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt --quiet
 
+      - name: Cache llmfit
+        id: llmfit-cache
+        uses: actions/cache@v4
+        with:
+          path: packaging/llmfit
+          key: llmfit-${{ env.LLMFIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: Download llmfit
+        if: steps.llmfit-cache.outputs.cache-hit != 'true'
         working-directory: packaging
         run: |
           ARCH=$(uname -m)
-          VER="v0.8.0"
+          VER="${LLMFIT_VERSION}"
           if [ "$ARCH" = "aarch64" ]; then
             ASSET="llmfit-${VER}-aarch64-unknown-linux-gnu.tar.gz"
           else
@@ -98,8 +140,11 @@ jobs:
           fi
           curl -L "https://github.com/AlexsJones/llmfit/releases/download/${VER}/${ASSET}" -o llmfit_tmp.tar.gz
           tar -xzf llmfit_tmp.tar.gz --strip-components=1
-          chmod +x llmfit
           rm -f llmfit_tmp.tar.gz
+
+      - name: Make llmfit executable
+        working-directory: packaging
+        run: chmod +x llmfit
 
       - name: Build binary
         working-directory: packaging
@@ -117,3 +162,59 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: packaging/dist/ReviewPanel
+
+  build-windows:
+    name: Windows Build
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt --quiet
+
+      - name: Cache llmfit
+        id: llmfit-cache
+        uses: actions/cache@v4
+        with:
+          path: packaging/llmfit.exe
+          key: llmfit-${{ env.LLMFIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      # Mirrors packaging/build.bat: the release zip contains
+      # llmfit-<ver>-x86_64-pc-windows-msvc/llmfit.exe, which must end up
+      # as packaging/llmfit.exe (ReviewPanel.spec bundles it from there).
+      - name: Download llmfit
+        if: steps.llmfit-cache.outputs.cache-hit != 'true'
+        working-directory: packaging
+        run: |
+          $ver = $env:LLMFIT_VERSION
+          $asset = "llmfit-$ver-x86_64-pc-windows-msvc.zip"
+          curl.exe -L "https://github.com/AlexsJones/llmfit/releases/download/$ver/$asset" -o llmfit_tmp.zip
+          Expand-Archive -Path llmfit_tmp.zip -DestinationPath llmfit_extract -Force
+          Move-Item -Force "llmfit_extract/llmfit-$ver-x86_64-pc-windows-msvc/llmfit.exe" llmfit.exe
+          Remove-Item -Recurse -Force llmfit_extract
+          Remove-Item -Force llmfit_tmp.zip
+          if (-not (Test-Path llmfit.exe)) { throw "llmfit.exe missing after extraction" }
+
+      - name: Build executable
+        working-directory: packaging
+        run: pyinstaller ReviewPanel.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReviewPanel-Windows
+          path: packaging/dist/ReviewPanel.exe
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/dist/ReviewPanel.exe
