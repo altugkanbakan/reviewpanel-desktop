@@ -41,7 +41,12 @@ exe = EXE(
     name='ReviewPanel',
     debug=False,
     strip=False,
-    upx=True,
+    # UPX never actually ran: PyInstaller disables it on non-Windows,
+    # and the Windows runner has no upx binary — the v2.1.2 build log
+    # shows no compression step. Left off deliberately; a packed,
+    # unsigned exe is a common antivirus false positive and the
+    # installer already uses lzma2 solid compression.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
