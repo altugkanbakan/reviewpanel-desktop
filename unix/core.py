@@ -178,16 +178,69 @@ def _missing_markers(agent_num: int, output: str) -> list[str]:
     ]
 
 
+def _format_run_stats(run_stats: dict) -> list[str]:
+    """
+    Render the optional 'Run statistics' block appended to the report.
+    run_stats = {"total_seconds": float, "agents": [{"agent", "seconds",
+    "prompt_eval_count", "eval_count", "eval_duration", "restored"}, ...]}
+    — every counter may be missing/None; render only what exists.
+    """
+    lines: list[str] = ["## Run Statistics", ""]
+    total = run_stats.get("total_seconds")
+    if total is not None:
+        mins, secs = divmod(int(total), 60)
+        lines.append(f"- **Total time:** {mins}m {secs}s")
+    agents = run_stats.get("agents") or []
+    total_prefill = sum(a.get("prompt_eval_count") or 0 for a in agents)
+    total_gen = sum(a.get("eval_count") or 0 for a in agents)
+    total_gen_ns = sum(a.get("eval_duration") or 0 for a in agents)
+    if total_prefill:
+        lines.append(f"- **Total prefill:** {total_prefill:,} tokens")
+    if total_gen:
+        lines.append(f"- **Total generated:** {total_gen:,} tokens")
+    if total_gen and total_gen_ns:
+        lines.append(
+            f"- **Average speed:** {total_gen / (total_gen_ns / 1e9):.1f} tok/s"
+        )
+    if agents:
+        lines += [
+            "",
+            "| Agent | Time | Prefill (tok) | Generated (tok) | Speed |",
+            "|---|---|---|---|---|",
+        ]
+        for a in agents:
+            if a.get("restored"):
+                lines.append(
+                    f"| {a.get('agent', '?')} | — | — | — | (checkpoint) |"
+                )
+                continue
+            secs = a.get("seconds")
+            ec, ed = a.get("eval_count"), a.get("eval_duration")
+            speed = f"{ec / (ed / 1e9):.1f} tok/s" if ec and ed else "—"
+            pc = a.get("prompt_eval_count")
+            lines.append(
+                f"| {a.get('agent', '?')} "
+                f"| {f'{secs:.0f}s' if secs is not None else '—'} "
+                f"| {f'{pc:,}' if pc is not None else '—'} "
+                f"| {f'{ec:,}' if ec is not None else '—'} "
+                f"| {speed} |"
+            )
+    lines += ["", "---", ""]
+    return lines
+
+
 def build_report(
     agent_outputs: list[str],
     manuscript_data: dict,
     journal: str,
     model: str,
     output_dir: Path | None = None,
+    run_stats: dict | None = None,
 ) -> Path:
     """
     Assemble all 6 agent outputs into a single Markdown report.
     Saves to output_dir (defaults to CWD) as PRE_SUBMISSION_MEDICAL_REVIEW_YYYY-MM-DD.md.
+    Optionally appends a 'Run Statistics' block when run_stats is given.
     Returns the saved Path.
     """
     today = date.today().isoformat()
@@ -239,6 +292,8 @@ def build_report(
             "",
         ]
 
+    if run_stats:
+        lines += _format_run_stats(run_stats)
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
     return output_path

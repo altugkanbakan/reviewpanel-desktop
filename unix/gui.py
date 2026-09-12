@@ -23,7 +23,10 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from agents import _NUM_CTX, _estimate_tokens, build_prompt, load_knowledge_base, run_agent
+from agents import (
+    _CTX_RESERVE, _NUM_CTX, _estimate_tokens, build_prompt,
+    load_knowledge_base, plan_context, prepare_agent6_prompt, run_agent,
+)
 from core import (
     KNOWN_JOURNALS, KB_BASE, __version__, build_report, clear_checkpoints,
     load_checkpoints, load_journal_profile, save_checkpoint,
@@ -180,6 +183,13 @@ def _ensure_ollama_serve(log_fn) -> bool:
             return True
         log_fn(f"  Waiting for Ollama… {i}/15s")
     return False
+
+
+def _fmt_eta(seconds: float) -> str:
+    """Rough remaining-time estimate for the status bar (e.g. '~4m left')."""
+    if seconds >= 90:
+        return f"~{round(seconds / 60)}m left"
+    return f"~{max(int(seconds), 5)}s left"
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +640,9 @@ class ReviewApp(ctk.CTk):
         self._review_running = False
         self._current_agent  = 0
         self._quip_index     = 0
+        self._last_quip      = "Working…"
+        self._live_chars     = 0
+        self._eta_text       = ""
 
         self._build_ui()
         self._poll_queue()
@@ -906,6 +919,14 @@ class ReviewApp(ctk.CTk):
                     self._append_log(msg[1])
                 elif kind == "agent_start":
                     self._set_agent_state(msg[1], "running")
+                    self._live_chars = 0
+                    self._refresh_status()
+                elif kind == "chunk":
+                    self._live_chars = msg[2]
+                    self._refresh_status()
+                elif kind == "eta":
+                    self._eta_text = msg[1]
+                    self._refresh_status()
                 elif kind == "agent_done":
                     self._set_agent_state(msg[1], "done")
                     self._progress.set(msg[1] / 6)
@@ -924,11 +945,22 @@ class ReviewApp(ctk.CTk):
         if not self._ticker_running:
             return
         quips = _AGENT_QUIPS.get(self._current_agent, ["Working…"])
-        quip  = quips[self._quip_index % len(quips)]
-        label = f"Agent {self._current_agent}/6 — " if self._current_agent > 0 else ""
-        self._status_var.set(f"{label}{quip}")
+        self._last_quip = quips[self._quip_index % len(quips)]
+        self._refresh_status()
         self._quip_index += 1
         self.after(3000, self._tick_status)
+
+    def _refresh_status(self):
+        """Compose the status line: quip + live stream counter + rough ETA."""
+        if not self._ticker_running:
+            return
+        label = f"Agent {self._current_agent}/6 — " if self._current_agent > 0 else ""
+        text  = f"{label}{self._last_quip}"
+        if self._live_chars:
+            text += f"  ·  {self._live_chars:,} chars"
+        if self._eta_text:
+            text += f"  ·  {self._eta_text}"
+        self._status_var.set(text)
 
     def _start(self):
         file_path = self._file_var.get().strip() or None
@@ -975,6 +1007,9 @@ class ReviewApp(ctk.CTk):
         self._report_path   = None
         self._current_agent = 0
         self._quip_index    = 0
+        self._last_quip     = "Working…"
+        self._live_chars    = 0
+        self._eta_text      = ""
         self._ticker_running = True
         self._tick_status()
 
@@ -1031,34 +1066,102 @@ class ReviewApp(ctk.CTk):
             agent_outputs: list[str] = []
             review_start = time.time()
 
+            # Two-tier context policy: one num_ctx for agents 1-5 and at
+            # most one other for agent 6 — every num_ctx change reloads
+            # the model and drops Ollama's prefix KV cache.
+            prompts = {
+                n: build_prompt(n, manuscript_data["full_text"], kb, "", None)
+                for n in range(1, 6)
+            }
+            tier_a_ctx = plan_context(
+                max(_estimate_tokens(p) for p in prompts.values())
+            )
+            log(f"Context window: {tier_a_ctx} tokens (agents 1-5)")
+            log("")
+
+            agent_stats: list[dict] = []
+            durations:   list[float] = []
+
             for num in range(1, 7):
                 self._current_agent = num
                 q.put(("agent_start", num))
                 if num in restored:
                     result = restored[num]
                     agent_outputs.append(result)
+                    agent_stats.append({"agent": num, "restored": True})
                     q.put(("agent_done", num))
                     log(f"[{num}/6] Restored from checkpoint ({len(result):,} chars)")
                     log("")
                     continue
                 log(f"[{num}/6] Agent {num}: {_AGENT_NAMES[num]} …")
-                t0     = time.time()
-                prompt = build_prompt(
-                    num, manuscript_data["full_text"], kb,
-                    journal_profile_text if num == 6 else "",
-                    agent_outputs if num == 6 else None,
-                )
+                t0 = time.time()
+                if num == 6:
+                    prompt, num_ctx, info = prepare_agent6_prompt(
+                        manuscript_data["full_text"], kb,
+                        journal_profile_text, agent_outputs, tier_a_ctx,
+                    )
+                    if info["trimmed"]:
+                        log(f"  Agent 6 input trimmed: "
+                            f"{info['before_tokens']:,} → "
+                            f"{info['after_tokens']:,} tokens")
+                    if num_ctx == tier_a_ctx:
+                        log(f"  Context window: {num_ctx} tokens "
+                            "(same as agents 1-5 — no model reload)")
+                    else:
+                        log(f"  Context window: {num_ctx} tokens (agent 6)")
+                else:
+                    prompt, num_ctx = prompts[num], tier_a_ctx
                 est_tokens = _estimate_tokens(prompt)
-                if est_tokens > _NUM_CTX:
+                if est_tokens + _CTX_RESERVE > _NUM_CTX:
                     log(f"  [WARN] Prompt ~{est_tokens:,} tokens exceeds "
                         f"context window ({_NUM_CTX}); output may be truncated")
-                result  = run_agent(num, prompt, model=model, verbose=False)
+                stats: dict = {}
+                result = run_agent(
+                    num, prompt, model=model, verbose=False,
+                    num_ctx=num_ctx,
+                    on_chunk=lambda text, n=num: q.put(("chunk", n, len(text))),
+                    on_log=log,
+                    stats=stats,
+                )
                 elapsed = time.time() - t0
                 agent_outputs.append(result)
                 save_checkpoint(manuscript_data, model, num, result)
                 q.put(("agent_done", num))
-                log(f"[{num}/6] Done  ({len(result):,} chars, {elapsed:.0f}s)")
+                durations.append(elapsed)
+                left = [k for k in range(num + 1, 7) if k not in restored]
+                if left:
+                    eta = sum(durations) / len(durations) * len(left)
+                    q.put(("eta", _fmt_eta(eta)))
+                else:
+                    q.put(("eta", ""))
+                done_line = f"[{num}/6] Done  ({len(result):,} chars, {elapsed:.0f}s"
+                ec, ed = stats.get("eval_count"), stats.get("eval_duration")
+                pc = stats.get("prompt_eval_count")
+                if ec and ed:
+                    done_line += f" · {ec / (ed / 1e9):.1f} tok/s"
+                if pc is not None:
+                    done_line += f" · prompt {pc:,} tok"
+                log(done_line + ")")
+                if pc is not None and est_tokens:
+                    reuse = max(0.0, 1.0 - pc / est_tokens) * 100
+                    log(f"  Prefill: {pc:,} of ~{est_tokens:,} est. prompt "
+                        f"tokens (~{reuse:.0f}% reused from prefix cache)")
+                agent_stats.append({
+                    "agent": num,
+                    "seconds": elapsed,
+                    "restored": False,
+                    "prompt_eval_count": pc,
+                    "eval_count": ec,
+                    "eval_duration": ed,
+                    "prompt_eval_duration": stats.get("prompt_eval_duration"),
+                })
                 log("")
+
+            total_prefill = sum(
+                s.get("prompt_eval_count") or 0 for s in agent_stats
+            )
+            total_gen    = sum(s.get("eval_count") or 0 for s in agent_stats)
+            total_gen_ns = sum(s.get("eval_duration") or 0 for s in agent_stats)
 
             log("[Phase 3] Assembling report …")
             output_dir  = Path(manuscript_data["source_path"]).parent
@@ -1068,10 +1171,19 @@ class ReviewApp(ctk.CTk):
                 journal=journal,
                 model=model,
                 output_dir=output_dir,
+                run_stats={
+                    "total_seconds": time.time() - review_start,
+                    "agents": agent_stats,
+                },
             )
             clear_checkpoints(manuscript_data)
             total = time.time() - review_start
             mins, secs = divmod(int(total), 60)
+            if total_prefill or total_gen:
+                summary = f"  Run stats: prefill {total_prefill:,} tok · generated {total_gen:,} tok"
+                if total_gen and total_gen_ns:
+                    summary += f" · avg {total_gen / (total_gen_ns / 1e9):.1f} tok/s"
+                log(summary)
             log(f"Report saved → {report_path}")
             log("")
             log("=" * 54)

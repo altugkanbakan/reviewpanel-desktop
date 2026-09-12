@@ -3,7 +3,9 @@ agents.py — 6 agent prompt builders + Ollama runner
 """
 
 import logging
+import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -54,7 +56,7 @@ _AGENT_ROLES = {
 _AGENT_TASKS = {
     1: (
         "Perform a thorough review of the manuscript prose based strictly on the "
-        "rules defined in your knowledge base files below.\n\n"
+        "rules defined in your knowledge base files above.\n\n"
         "CRITICAL RULES — you must follow these exactly:\n"
         "1. ONLY flag a term if it appears verbatim in the manuscript text above. "
         "For every finding, you MUST quote the exact sentence or phrase from the "
@@ -120,7 +122,7 @@ _AGENT_TASKS = {
         "- **Missing Caveats** (numbered list)"
     ),
     4: (
-        "Enforce SAMPL guidelines (provided below). Check appropriateness of "
+        "Enforce SAMPL guidelines (provided above). Check appropriateness of "
         "statistical tests, presence of exact p-values, and 95% CIs for all point "
         "estimates. Verify missing data handling and power calculations.\n\n"
         "Output: A Markdown report with three sections:\n"
@@ -190,10 +192,11 @@ def build_prompt(
 
     sections: list[str] = []
 
-    sections.append(
-        f"You are acting as a {role} reviewing an academic medical manuscript.\n"
-        f"Your agent number is {agent_num} of 6."
-    )
+    # ---- Manuscript ----
+    # Always first and byte-identical across all 6 agents (no agent number,
+    # role, or other variable content before or inside this block) so
+    # Ollama's prefix KV cache can reuse the prefill between agent calls.
+    sections.append("## Manuscript\n\n" + manuscript_text)
 
     # ---- Inject knowledge-base files ----
     if agent_num == 1:
@@ -236,10 +239,12 @@ def build_prompt(
             )
             sections.append("## Previous Agent Outputs\n\n" + blocks)
 
-    # ---- Manuscript ----
-    sections.append("## Manuscript\n\n" + manuscript_text)
-
-    # ---- Task instructions ----
+    # ---- Role + task instructions (last, for instruction recency) ----
+    sections.append(
+        f"You are acting as a {role} reviewing the academic medical "
+        f"manuscript above.\n"
+        f"Your agent number is {agent_num} of 6."
+    )
     sections.append("## Your Task\n\n" + task)
 
     return "\n\n---\n\n".join(sections)
@@ -259,8 +264,32 @@ _MAX_RETRIES = 1
 # Seconds to wait before retrying.
 _RETRY_DELAY = 5
 
-# Fixed context window sent to Ollama (dynamic sizing planned for Phase 2).
+# Default / ceiling context window. Callers should size the window per run
+# via plan_context(); this value is only the fallback and the ladder top.
 _NUM_CTX = 32768
+
+# Context-window sizing. Ollama reloads the model — and drops its prefix KV
+# cache — whenever num_ctx changes, so a run uses at most two values: one for
+# agents 1–5 (tier A) and one for agent 6 (tier B).
+#
+# The window is rounded up to a _CTX_STEP multiple rather than a power of two:
+# llama.cpp allocates KV cache for the whole window, and on a 6 GB card every
+# unused token costs real VRAM (~56 KiB/token for a 7B GQA model). Rounding
+# 17,700 up to 32,768 instead of 18,432 would waste ~800 MiB and push the
+# model off the GPU — the exact spill this sizing exists to avoid.
+_CTX_MIN = 4096
+_CTX_STEP = 2048
+_CTX_MAX = 32768
+
+# Tokens reserved for the model's own output when sizing the context window.
+_CTX_RESERVE = 2048
+
+# Keep the model loaded between agent calls so the prefix KV cache survives.
+# Verified against ollama 0.6.1: Client.chat(..., keep_alive=...) exists.
+_KEEP_ALIVE = "30m"
+
+# Minimum seconds between on_chunk callbacks (~5 GUI updates per second).
+_STREAM_MIN_INTERVAL = 0.2
 
 
 def _estimate_tokens(text: str) -> int:
@@ -268,44 +297,290 @@ def _estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
+def plan_context(prompt_tokens: int, reserve: int = _CTX_RESERVE) -> int:
+    """
+    Round prompt_tokens + reserve up to the next _CTX_STEP multiple, clamped
+    to [_CTX_MIN, _CTX_MAX]. Returns _CTX_MAX when even that is too small.
+    """
+    needed = prompt_tokens + reserve
+    if needed <= _CTX_MIN:
+        return _CTX_MIN
+    stepped = -(-needed // _CTX_STEP) * _CTX_STEP   # ceil to step multiple
+    return min(stepped, _CTX_MAX)
+
+
+# ---------------------------------------------------------------------------
+# Agent 6 diet — budget-driven, content-aware trimming of previous outputs
+# ---------------------------------------------------------------------------
+
+# Section markers that may be dropped when the Agent 6 prompt must shrink,
+# ordered lowest priority first. Mirrors core._EXPECTED_MARKERS; critical
+# sections (Critical Issues, Critical Inconsistencies, Causal Overclaiming,
+# Methodological Errors, Missing Elements in Tables/Figures) are never
+# dropped wholesale — at worst they are tail-truncated as a last resort.
+_TRIM_DROP_ORDER = (
+    "Style Patterns",
+    "Minor Issues",
+    "Terminology Drift",
+    "Formatting Inconsistencies",
+    "Missing Caveats",
+    "Regression Issues",
+    "Incomplete Statistical Reporting",
+    "Sample Flow Errors",
+    "Clinical/Statistical Conflation",
+)
+
+# No agent's output may be trimmed below this many (estimated) tokens.
+_TRIM_MIN_TOKENS = 256
+
+_TRIM_NOTICE = "\n\n[... trimmed to fit the context window ...]"
+
+# A Markdown heading line: "## Title" or a line that is only "**Title**".
+_HEADING_RE = re.compile(r"^(#{1,6}\s+.+|\*\*[^*]+\*\*:?\s*)$")
+
+
+def _split_blocks(text: str) -> list[tuple[str, str]]:
+    """
+    Split a Markdown agent output into (heading, block_text) tuples, where
+    heading is the lower-cased heading line ("" for the preamble) and
+    block_text includes the heading line itself.
+    """
+    headings: list[str] = [""]
+    blocks: list[list[str]] = [[]]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _HEADING_RE.match(stripped):
+            headings.append(stripped.lower())
+            blocks.append([line])
+        else:
+            blocks[-1].append(line)
+    result = [
+        (h, "\n".join(b)) for h, b in zip(headings, blocks)
+        if h or "\n".join(b).strip()
+    ]
+    return result or [("", text)]
+
+
+def _trim_one(text: str, budget_tokens: int) -> str:
+    """
+    Trim a single agent output to roughly budget_tokens. Content-aware:
+    drops low-priority sections first; falls back to head truncation
+    (keep the beginning, cut the tail) when no heading structure exists.
+    """
+    if _estimate_tokens(text) <= budget_tokens:
+        return text
+
+    blocks = _split_blocks(text)
+    trimmed = text
+    if len(blocks) > 1:
+        for marker in _TRIM_DROP_ORDER:
+            key = marker.lower()
+            kept = [b for b in blocks if not (b[0] and key in b[0])]
+            if len(kept) == len(blocks):
+                continue
+            blocks = kept
+            trimmed = "\n\n".join(b[1].strip("\n") for b in blocks)
+            if _estimate_tokens(trimmed + _TRIM_NOTICE) <= budget_tokens:
+                return trimmed + _TRIM_NOTICE
+    if _estimate_tokens(trimmed + _TRIM_NOTICE) <= budget_tokens:
+        return trimmed + _TRIM_NOTICE
+
+    # Head truncation: keep the beginning (critical sections come first).
+    keep_chars = max(
+        (budget_tokens - _estimate_tokens(_TRIM_NOTICE)) * 4,
+        _TRIM_MIN_TOKENS * 4,
+    )
+    return trimmed[:keep_chars].rstrip() + _TRIM_NOTICE
+
+
+def trim_previous_outputs(outputs: list[str], budget_tokens: int) -> list[str]:
+    """
+    Fit the previous agents' outputs into ~budget_tokens (estimated).
+    The budget is shared by water-filling: outputs already below their
+    fair share keep everything, and their leftover budget is given to
+    the larger outputs. No output is ever removed entirely — each one
+    keeps at least _TRIM_MIN_TOKENS. Returns a new list.
+    """
+    if not outputs:
+        return []
+    sizes = [_estimate_tokens(o) for o in outputs]
+    if sum(sizes) <= budget_tokens:
+        return list(outputs)
+
+    pool = max(budget_tokens, _TRIM_MIN_TOKENS * len(outputs))
+    remaining = list(range(len(outputs)))
+    shares: dict[int, int] = {}
+    changed = True
+    while remaining and changed:
+        changed = False
+        fair = pool // len(remaining)
+        for i in list(remaining):
+            if sizes[i] <= fair:
+                shares[i] = sizes[i]
+                pool -= sizes[i]
+                remaining.remove(i)
+                changed = True
+    for i in remaining:
+        shares[i] = max(pool // len(remaining), _TRIM_MIN_TOKENS)
+
+    return [
+        outputs[i] if shares[i] >= sizes[i] else _trim_one(outputs[i], shares[i])
+        for i in range(len(outputs))
+    ]
+
+
+def prepare_agent6_prompt(
+    manuscript_text: str,
+    kb: dict[str, str],
+    journal_profile_text: str,
+    previous_outputs: list[str],
+    tier_a_ctx: int,
+    reserve: int = _CTX_RESERVE,
+) -> tuple[str, int, dict]:
+    """
+    Build the Agent 6 prompt under the two-tier context policy.
+
+    Prefer tier_a_ctx, so the whole run uses a single num_ctx and the model
+    is never reloaded: keep the outputs whole if they fit there, otherwise
+    trim them to that budget. Only when even minimally trimmed outputs
+    cannot fit does the window grow — sized to what is actually needed.
+    Returns (prompt, num_ctx, info) where info = {"trimmed",
+    "before_tokens", "after_tokens", "num_ctx"} for logging.
+    """
+    base_prompt = build_prompt(6, manuscript_text, kb, journal_profile_text, None)
+    base_tokens = _estimate_tokens(base_prompt)
+    full_prompt = build_prompt(
+        6, manuscript_text, kb, journal_profile_text, previous_outputs
+    )
+    full_tokens = _estimate_tokens(full_prompt)
+
+    def _info(trimmed: bool, after: int, ctx: int) -> dict:
+        return {
+            "trimmed": trimmed,
+            "before_tokens": full_tokens,
+            "after_tokens": after,
+            "num_ctx": ctx,
+        }
+
+    # Everything fits as-is at tier A: no trim, no reload.
+    if full_tokens + reserve <= tier_a_ctx:
+        return full_prompt, tier_a_ctx, _info(False, full_tokens, tier_a_ctx)
+
+    # Trim to tier A's budget when the shares are still meaningful.
+    budget = tier_a_ctx - reserve - base_tokens
+    if budget >= _TRIM_MIN_TOKENS * len(previous_outputs):
+        trimmed = trim_previous_outputs(previous_outputs, budget)
+        prompt = build_prompt(
+            6, manuscript_text, kb, journal_profile_text, trimmed
+        )
+        prompt_tokens = _estimate_tokens(prompt)
+        if prompt_tokens + reserve <= tier_a_ctx:
+            return prompt, tier_a_ctx, _info(True, prompt_tokens, tier_a_ctx)
+
+    # Manuscript and knowledge base alone crowd out tier A: grow the window
+    # to what minimally trimmed outputs actually need, and no further.
+    trimmed = trim_previous_outputs(
+        previous_outputs, _TRIM_MIN_TOKENS * len(previous_outputs)
+    )
+    prompt = build_prompt(6, manuscript_text, kb, journal_profile_text, trimmed)
+    prompt_tokens = _estimate_tokens(prompt)
+    ctx = max(tier_a_ctx, plan_context(prompt_tokens, reserve))
+    if prompt_tokens + reserve <= ctx:
+        # Spend whatever headroom that window left on longer outputs.
+        budget = ctx - reserve - base_tokens
+        if budget > _TRIM_MIN_TOKENS * len(previous_outputs):
+            trimmed = trim_previous_outputs(previous_outputs, budget)
+            wider = build_prompt(
+                6, manuscript_text, kb, journal_profile_text, trimmed
+            )
+            if _estimate_tokens(wider) + reserve <= ctx:
+                prompt, prompt_tokens = wider, _estimate_tokens(wider)
+    return prompt, ctx, _info(True, prompt_tokens, ctx)
+
+
+def _chunk_field(chunk, key: str):
+    """Read a counter off a streamed chunk (ollama ChatResponse or dict)."""
+    if chunk is None:
+        return None
+    try:
+        return chunk.get(key)
+    except AttributeError:
+        return getattr(chunk, key, None)
+
+
 def run_agent(
     agent_num: int,
     prompt: str,
     model: str = "qwen2.5:7b",
     verbose: bool = False,
+    num_ctx: int | None = None,
+    on_chunk: Callable[[str], None] | None = None,
+    on_log: Callable[[str], None] | None = None,
+    stats: dict | None = None,
 ) -> str:
     """
-    Send the prompt to Ollama and return the model's response text.
+    Send the prompt to Ollama (streaming) and return the full response text.
     Uses low temperature (0.3) for consistent structured Markdown output.
     Retries once on network/timeout errors; raises RuntimeError (carrying
     the agent number) if all attempts fail.
+
+    num_ctx  — context window for this call (defaults to _NUM_CTX so
+               legacy call sites keep the old behaviour).
+    on_chunk — optional progress callback, throttled to one call per
+               _STREAM_MIN_INTERVAL seconds, invoked with the FULL text
+               accumulated so far. An empty string means a retry has
+               restarted the stream. Must not touch Tkinter directly —
+               the GUI feeds its thread-safe queue here.
+    on_log   — optional callback for human-readable notices (retries).
+    stats    — optional dict, filled in-place with the final chunk's
+               counters: prompt_eval_count, eval_count,
+               prompt_eval_duration, eval_duration (ns; may be None).
     """
+    ctx = num_ctx if num_ctx is not None else _NUM_CTX
     est_tokens = _estimate_tokens(prompt)
-    if est_tokens > _NUM_CTX:
+    if est_tokens > ctx:
         logger.warning(
             "Agent %d: prompt ~%d tokens exceeds context window (%d); "
             "output may be truncated",
-            agent_num, est_tokens, _NUM_CTX,
+            agent_num, est_tokens, ctx,
         )
 
     if verbose:
         print(
             f"  [Agent {agent_num}] Sending prompt "
-            f"({len(prompt):,} chars, ~{est_tokens:,} tokens) to {model} ...",
+            f"({len(prompt):,} chars, ~{est_tokens:,} tokens) to {model} "
+            f"(num_ctx={ctx}) ...",
             flush=True,
         )
 
     client = ollama.Client(timeout=_REQUEST_TIMEOUT)
-    response = None
+    content = ""
+    final_chunk = None
     for attempt in range(_MAX_RETRIES + 1):
+        parts: list[str] = []
+        last_emit = 0.0
         try:
-            response = client.chat(
+            stream = client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                options={"num_ctx": _NUM_CTX, "temperature": 0.3},
+                options={"num_ctx": ctx, "temperature": 0.3},
+                stream=True,
+                keep_alive=_KEEP_ALIVE,
             )
+            for chunk in stream:
+                piece = chunk["message"]["content"] or ""
+                if piece:
+                    parts.append(piece)
+                final_chunk = chunk
+                if on_chunk is not None:
+                    now = time.monotonic()
+                    if now - last_emit >= _STREAM_MIN_INTERVAL:
+                        last_emit = now
+                        on_chunk("".join(parts))
+            content = "".join(parts)
             break
         except (httpx.TransportError, ConnectionError) as exc:
+            final_chunk = None
             if attempt < _MAX_RETRIES:
                 logger.warning(
                     "Agent %d: Ollama request failed (%s) — retrying in %ds "
@@ -313,6 +588,10 @@ def run_agent(
                     agent_num, exc, _RETRY_DELAY,
                     attempt + 1, _MAX_RETRIES + 1,
                 )
+                if on_log is not None:
+                    on_log(f"[retry] restarting agent {agent_num}")
+                if on_chunk is not None:
+                    on_chunk("")  # reset any partial text shown in the GUI
                 time.sleep(_RETRY_DELAY)
             else:
                 raise RuntimeError(
@@ -320,7 +599,15 @@ def run_agent(
                     f"{_MAX_RETRIES + 1} attempts: {exc}"
                 ) from exc
 
-    content: str = response["message"]["content"]
+    if on_chunk is not None:
+        on_chunk(content)  # final flush with the complete text
+    if stats is not None:
+        for key in (
+            "prompt_eval_count", "eval_count",
+            "prompt_eval_duration", "eval_duration",
+        ):
+            stats[key] = _chunk_field(final_chunk, key)
+        stats["num_ctx"] = ctx
 
     if verbose:
         print(
@@ -363,18 +650,44 @@ def run_all_agents(
     outputs: list[str] = []
     manuscript_text = manuscript_data["full_text"]
 
+    # Two-tier context policy: one num_ctx for agents 1-5 (tier A) and at
+    # most one other for agent 6 (each num_ctx change reloads the model
+    # and drops Ollama's prefix cache).
+    prompts = {
+        n: build_prompt(n, manuscript_text, kb, "", None) for n in range(1, 6)
+    }
+    tier_a_ctx = plan_context(
+        max(_estimate_tokens(p) for p in prompts.values())
+    )
+    print(f"Context window: {tier_a_ctx} tokens (agents 1-5)", flush=True)
+
     for agent_num in range(1, 7):
         name = _AGENT_NAMES[agent_num]
         print(f"[{agent_num}/6] Running Agent {agent_num}: {name} ...", flush=True)
 
-        prompt = build_prompt(
-            agent_num,
-            manuscript_text,
-            kb,
-            journal_profile_text if agent_num == 6 else "",
-            outputs if agent_num == 6 else None,
+        if agent_num == 6:
+            prompt, num_ctx, info = prepare_agent6_prompt(
+                manuscript_text, kb, journal_profile_text, outputs, tier_a_ctx,
+            )
+            if info["trimmed"]:
+                print(
+                    f"Agent 6 input trimmed: {info['before_tokens']:,} "
+                    f"→ {info['after_tokens']:,} tokens",
+                    flush=True,
+                )
+            if num_ctx == tier_a_ctx:
+                print(
+                    f"Context window: {num_ctx} tokens (agent 6 — same as "
+                    "agents 1-5, no model reload)",
+                    flush=True,
+                )
+            else:
+                print(f"Context window: {num_ctx} tokens (agent 6)", flush=True)
+        else:
+            prompt, num_ctx = prompts[agent_num], tier_a_ctx
+        result = run_agent(
+            agent_num, prompt, model=model, verbose=verbose, num_ctx=num_ctx,
         )
-        result = run_agent(agent_num, prompt, model=model, verbose=verbose)
         outputs.append(result)
 
         print(f"[{agent_num}/6] Agent {agent_num} complete.", flush=True)
