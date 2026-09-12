@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 # Knowledge-base loader
 # ---------------------------------------------------------------------------
 
-KB_BASE = Path(__file__).parent / "knowledge_base"
+# Single source of truth for the KB location (frozen-build aware): core.py
+from core import KB_BASE
 
 _KB_FILES = {
     "ama_style": KB_BASE / "standarts" / "AMA_Style_Core_Guidelines.md",
@@ -38,6 +39,30 @@ def load_knowledge_base() -> dict[str, str]:
             logger.warning("Could not load KB file %s: %s", path, e)
             kb[key] = ""
     return kb
+
+
+def verify_knowledge_base() -> list[str]:
+    """
+    Integrity check: return the KB keys whose files are missing, unreadable
+    or empty. An empty list means every expected KB file loaded with content.
+    Callers should surface a *visible* warning when this is non-empty —
+    load_knowledge_base() deliberately keeps its silent empty-string
+    fallback so a damaged install still runs, but that fallback silently
+    produces worthless reviews if nobody checks this.
+    """
+    problems: list[str] = []
+    for key, path in _KB_FILES.items():
+        try:
+            if not path.read_text(encoding="utf-8", errors="replace").strip():
+                problems.append(key)
+        except OSError:
+            problems.append(key)
+    if problems:
+        logger.warning(
+            "Knowledge base incomplete — missing/empty: %s (KB_BASE=%s)",
+            ", ".join(problems), KB_BASE,
+        )
+    return problems
 
 
 # ---------------------------------------------------------------------------

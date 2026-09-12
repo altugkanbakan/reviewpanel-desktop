@@ -1,6 +1,7 @@
 """
-gui.py — Modern CustomTkinter GUI for Review Panel
-Entry point: run this file or the compiled ReviewPanel.exe
+gui.py — Modern CustomTkinter GUI for Review Panel (Windows / macOS / Linux)
+Entry point: run this file or the compiled ReviewPanel binary / .app / .exe
+All OS-specific behaviour is centralised in platforms.py.
 """
 
 from __future__ import annotations
@@ -9,7 +10,9 @@ import io
 import json
 import logging
 import os
+import platform
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -23,12 +26,17 @@ import customtkinter as ctk
 from agents import (
     _CTX_RESERVE, _NUM_CTX, _estimate_tokens, build_prompt,
     load_knowledge_base, plan_context, prepare_agent6_prompt, run_agent,
+    verify_knowledge_base,
 )
 from core import (
     KNOWN_JOURNALS, KB_BASE, __version__, build_report, clear_checkpoints,
     load_checkpoints, load_journal_profile, save_checkpoint,
 )
 from manuscript import discover_manuscript
+from platforms import (
+    IS_LINUX, IS_MAC, IS_WINDOWS, NO_WINDOW_FLAGS, OLLAMA_DOWNLOAD_PAGE,
+    llmfit_binary_name, mono_font_family, ollama_install_hint, open_path,
+)
 
 # ---------------------------------------------------------------------------
 # Frozen-build safety — in a windowed (console=False) build sys.stdout and
@@ -61,8 +69,6 @@ ACCENT   = "#3B8ED0"
 SUCCESS  = "#4CAF50"
 WARNING  = "#FFA726"
 ERROR    = "#EF5350"
-SURFACE  = "#2B2B2B"
-BG       = "#1E1E1E"
 
 _AGENT_NAMES = {
     1: "Medical Style & Grammar",
@@ -89,17 +95,19 @@ _SUPPORTED_EXTS = (".tex", ".md", ".docx", ".txt")
 # Helpers — llmfit
 # ---------------------------------------------------------------------------
 
-def _llmfit_exe() -> Path:
-    """Return the path to llmfit.exe, checking multiple locations."""
+def _llmfit_bin() -> Path:
+    """Return the path to the llmfit binary, checking multiple locations."""
+    name = llmfit_binary_name()
     candidates = []
     if getattr(sys, "frozen", False):
-        # PyInstaller temp extraction dir (when bundled inside EXE)
-        candidates.append(Path(sys._MEIPASS) / "llmfit.exe")
-        # Alongside the EXE itself (when shipped separately next to EXE)
-        candidates.append(Path(sys.executable).parent / "llmfit.exe")
+        # PyInstaller temp extraction dir (when bundled inside the binary)
+        candidates.append(Path(sys._MEIPASS) / name)
+        # Alongside the executable itself (when shipped separately)
+        candidates.append(Path(sys.executable).parent / name)
     else:
-        # Development: same folder as gui.py
-        candidates.append(Path(__file__).parent / "llmfit.exe")
+        # Development: same folder as gui.py, then repo packaging/ dir
+        candidates.append(Path(__file__).parent / name)
+        candidates.append(Path(__file__).parent.parent / "packaging" / name)
     for p in candidates:
         if p.exists():
             return p
@@ -113,15 +121,15 @@ def run_llmfit() -> dict:
       - models: list    (recommended model dicts)
       - error: str|None
     """
-    exe = _llmfit_exe()
+    exe = _llmfit_bin()
     if not exe.exists():
-        return {"models": [], "error": "llmfit.exe not found in bundle."}
+        return {"models": [], "error": f"llmfit not found at {exe}"}
 
     try:
         result = subprocess.run(
             [str(exe), "recommend", "--json", "--use-case", "reasoning", "--no-dashboard"],
             capture_output=True, text=True, timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=NO_WINDOW_FLAGS,
         )
         data = json.loads(result.stdout)
         models = data.get("models", [])
@@ -152,15 +160,7 @@ def _model_label(m: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _ollama_installed() -> bool:
-    try:
-        subprocess.run(
-            ["ollama", "--version"],
-            capture_output=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    return shutil.which("ollama") is not None
 
 
 def _ollama_running() -> bool:
@@ -189,7 +189,7 @@ def _ensure_ollama_serve(log_fn) -> bool:
         subprocess.Popen(
             ["ollama", "serve"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=NO_WINDOW_FLAGS,
         )
     except FileNotFoundError:
         log_fn("  [ERROR] 'ollama' not found on PATH.")
@@ -379,17 +379,19 @@ class HardwareCheckWindow(ctk.CTkToplevel):
 class OllamaInstallDialog(ctk.CTkToplevel):
     """
     Shown when Ollama is not installed but hardware can run models.
-    Downloads OllamaSetup.exe and runs it silently.
+    Windows : downloads OllamaSetup.exe and runs it silently.
+    macOS   : downloads the .zip, extracts Ollama.app to /Applications.
+    Linux   : runs the official install.sh (pkexec first, then plain bash).
     """
-    OLLAMA_URL = "https://ollama.com/download/OllamaSetup.exe"
 
     def __init__(self, parent, on_done):
         super().__init__(parent)
         self.title("Install Ollama")
-        self.geometry("480x260")
+        self.geometry("500x300")
         self.resizable(False, False)
         self.grab_set()
         self._on_done = on_done
+        self._hint = ollama_install_hint()
         self._build_ui()
 
     def _build_ui(self):
@@ -397,47 +399,118 @@ class OllamaInstallDialog(ctk.CTkToplevel):
             self, text="Ollama Not Found",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(pady=(20, 6))
-        ctk.CTkLabel(
-            self,
-            text="Ollama is required to run local AI models.\n"
-                 "Click below to download and install it automatically.",
-            wraplength=420,
-        ).pack(pady=(0, 16))
+        ctk.CTkLabel(self, text=self._hint["desc"], wraplength=440).pack(pady=(0, 12))
 
-        self._bar = ctk.CTkProgressBar(self, width=400)
+        if IS_LINUX:
+            cmd_frame = ctk.CTkFrame(self, fg_color="gray20", corner_radius=8)
+            cmd_frame.pack(fill="x", padx=24, pady=(0, 12))
+            ctk.CTkLabel(
+                cmd_frame, text=self._hint["cmd"],
+                font=ctk.CTkFont(family=mono_font_family(), size=11),
+                text_color="lightgreen",
+            ).pack(padx=12, pady=8)
+
+        self._bar = ctk.CTkProgressBar(self, width=440)
         self._bar.set(0)
-        self._bar.pack(pady=(0, 8))
+        self._bar.pack(pady=(0, 6))
 
         self._status = ctk.CTkLabel(self, text="", text_color="gray")
         self._status.pack()
 
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=14)
+
         self._install_btn = ctk.CTkButton(
-            self, text="Download & Install Ollama",
+            btn_row, text=self._hint["button"],
             command=self._start_install,
         )
-        self._install_btn.pack(pady=16)
+        self._install_btn.pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            btn_row, text="Open Download Page",
+            fg_color="gray30", hover_color="gray40",
+            command=lambda: webbrowser.open(OLLAMA_DOWNLOAD_PAGE),
+        ).pack(side="left", padx=6)
 
     def _start_install(self):
         self._install_btn.configure(state="disabled")
         self._bar.configure(mode="indeterminate")
         self._bar.start()
-        self._status.configure(text="Downloading OllamaSetup.exe…")
-        threading.Thread(target=self._do_install, daemon=True).start()
+        if IS_WINDOWS:
+            self._status.configure(text="Downloading OllamaSetup.exe…")
+            threading.Thread(target=self._install_windows, daemon=True).start()
+        elif IS_MAC:
+            self._status.configure(text="Downloading Ollama…")
+            threading.Thread(target=self._install_mac, daemon=True).start()
+        else:
+            self._status.configure(text="Running install script (may need password)…")
+            threading.Thread(target=self._install_linux, daemon=True).start()
 
-    def _do_install(self):
+    # ---- Windows: download setup exe, run silently ----
+    def _install_windows(self):
         import urllib.request, tempfile
         try:
             tmp = tempfile.mktemp(suffix=".exe")
-            urllib.request.urlretrieve(self.OLLAMA_URL, tmp)
+            urllib.request.urlretrieve(self._hint["url"], tmp)
             self.after(0, lambda: self._status.configure(text="Installing Ollama…"))
             subprocess.run([tmp, "/S"], check=True)
             self.after(0, self._install_done)
         except Exception as exc:
-            self.after(0, lambda: self._status.configure(
-                text=f"Failed: {exc}", text_color=ERROR
-            ))
-            self.after(0, lambda: self._install_btn.configure(state="normal"))
-            self.after(0, lambda: self._bar.stop())
+            self.after(0, lambda: self._finish_err(str(exc)))
+
+    # ---- macOS: download zip, extract to /Applications ----
+    def _install_mac(self):
+        import urllib.request, tempfile, zipfile
+        try:
+            tmp_zip = tempfile.mktemp(suffix=".zip")
+            urllib.request.urlretrieve(self._hint["url"], tmp_zip)
+            self.after(0, lambda: self._status.configure(text="Extracting…"))
+
+            tmp_dir = tempfile.mkdtemp()
+            with zipfile.ZipFile(tmp_zip, "r") as z:
+                z.extractall(tmp_dir)
+            os.unlink(tmp_zip)
+
+            # Find the .app inside the extracted dir
+            apps = list(Path(tmp_dir).glob("**/*.app"))
+            if not apps:
+                raise FileNotFoundError("Ollama.app not found in downloaded zip.")
+
+            dest = Path("/Applications") / apps[0].name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.move(str(apps[0]), str(dest))
+
+            # Launch Ollama
+            subprocess.Popen(["open", str(dest)])
+            self.after(0, self._install_done)
+        except Exception as exc:
+            self.after(0, lambda: self._finish_err(str(exc)))
+
+    # ---- Linux: run install.sh via pkexec or bare bash ----
+    def _install_linux(self):
+        cmd = self._hint["cmd"]
+        try:
+            # Try graphical privilege escalation first (works on GNOME/KDE)
+            result = subprocess.run(
+                ["pkexec", "bash", "-c", cmd],
+                timeout=120,
+            )
+            if result.returncode == 0:
+                self.after(0, self._install_done)
+            else:
+                raise RuntimeError(f"Install script exited with code {result.returncode}")
+        except FileNotFoundError:
+            # pkexec not available — try plain bash (works if already root)
+            try:
+                subprocess.run(["bash", "-c", cmd], check=True, timeout=120)
+                self.after(0, self._install_done)
+            except Exception as exc:
+                self.after(0, lambda: self._finish_err(
+                    f"{exc}\n\nTry running manually in a terminal:\n{cmd}"
+                ))
+        except Exception as exc:
+            self.after(0, lambda: self._finish_err(str(exc)))
 
     def _install_done(self):
         self._bar.stop()
@@ -445,6 +518,11 @@ class OllamaInstallDialog(ctk.CTkToplevel):
         self._bar.set(1)
         self._status.configure(text="Ollama installed successfully!", text_color=SUCCESS)
         self.after(1500, lambda: [self.destroy(), self._on_done()])
+
+    def _finish_err(self, msg: str):
+        self._bar.stop()
+        self._status.configure(text=f"Failed: {msg}", text_color=ERROR)
+        self._install_btn.configure(state="normal")
 
 
 # ---------------------------------------------------------------------------
@@ -648,10 +726,39 @@ class ReviewApp(ctk.CTk):
         self._poll_queue()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Knowledge-base integrity check — a broken bundle would otherwise
+        # silently run with empty KB files and produce worthless reviews.
+        self._kb_problems = verify_knowledge_base()
+        if self._kb_problems:
+            self._warn_kb_problems()
+
         # Run hardware check in background on startup
         threading.Thread(target=self._startup_checks, daemon=True).start()
         # Populate the model list from Ollama in the background (no GUI freeze)
         self._refresh_models(quiet=True)
+
+    # ------------------------------------------------------------------
+    # Knowledge-base integrity warning
+    # ------------------------------------------------------------------
+
+    def _warn_kb_problems(self):
+        """Surface missing/empty KB files loudly: log box, status bar, popup."""
+        missing = ", ".join(self._kb_problems)
+        self._append_log("[WARN] Knowledge base incomplete!")
+        self._append_log(f"       Missing or empty: {missing}")
+        self._append_log(f"       Expected under: {KB_BASE}")
+        self._append_log("       Reviews will run but agent guidance will be degraded.")
+        self._status_var.set(
+            f"⚠  Knowledge base incomplete ({missing}) — reviews will be degraded."
+        )
+        self.after(500, lambda: messagebox.showwarning(
+            "Knowledge base incomplete",
+            "Some knowledge-base files are missing or empty:\n\n"
+            f"{missing}\n\n"
+            f"Expected under:\n{KB_BASE}\n\n"
+            "Reviews will still run, but agent guidance will be degraded.\n"
+            "Please reinstall Review Panel.",
+        ))
 
     # ------------------------------------------------------------------
     # UI construction
@@ -810,7 +917,7 @@ class ReviewApp(ctk.CTk):
         ctk.CTkLabel(right, text="Log", text_color="gray").pack(anchor="w", padx=16)
         self._log = ctk.CTkTextbox(
             right, state="disabled", wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=11),
+            font=ctk.CTkFont(family=mono_font_family(), size=11),
         )
         self._log.pack(fill="both", expand=True, padx=16, pady=(4, 8))
 
@@ -1097,6 +1204,7 @@ class ReviewApp(ctk.CTk):
             log("=" * 54)
             log(f"  Journal : {journal}")
             log(f"  Model   : {model}")
+            log(f"  Platform: {platform.system()} {platform.machine()}")
             log("")
 
             log("[Phase 1] Manuscript loaded")
@@ -1124,6 +1232,11 @@ class ReviewApp(ctk.CTk):
             log("")
 
             kb = load_knowledge_base()
+            kb_empty = [k for k, v in kb.items() if not v.strip()]
+            if kb_empty:
+                log("  [WARN] Knowledge base incomplete — missing/empty: "
+                    + ", ".join(kb_empty))
+                log("         Agent guidance will be degraded for this run.")
             agent_outputs: list[str] = []
             review_start = time.time()
 
@@ -1302,10 +1415,7 @@ class ReviewApp(ctk.CTk):
 
     def _open_report(self):
         if self._report_path:
-            if sys.platform == "win32":
-                os.startfile(self._report_path)
-            else:
-                subprocess.Popen(["xdg-open", self._report_path])
+            open_path(self._report_path)
 
 
 # ---------------------------------------------------------------------------

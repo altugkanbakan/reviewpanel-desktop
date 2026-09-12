@@ -1,9 +1,9 @@
 ; installer.iss -- Inno Setup script for Review Panel
 ; Requires: Inno Setup 6+ (https://jrsoftware.org/isinfo.php)
-; Run this AFTER build.bat has produced dist\ReviewPanel.exe
+; Run this from packaging/ AFTER build.bat has produced dist\ReviewPanel.exe
 
 #define AppName "Review Panel"
-; Version source: core.py::__version__ — update together when bumping.
+; Version source: src/core.py::__version__ — update together when bumping.
 #define AppVersion "2.1.1"
 #define AppPublisher "altugkanbakan"
 #define AppExeName "ReviewPanel.exe"

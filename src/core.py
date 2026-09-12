@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import shutil
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -28,7 +29,21 @@ KNOWN_JOURNALS = ["top-medical"] + list(JOURNAL_FILES.keys()) + [
     "NEJM", "Lancet", "BMJ", "AJEM", "JAMIA", "BMCMedEd", "SimHealthcare",
 ]
 
-KB_BASE = Path(__file__).parent / "knowledge_base"
+# ---------------------------------------------------------------------------
+# Resource resolution — single source of truth for bundled data paths.
+# In a PyInstaller onefile build, data files are extracted to sys._MEIPASS;
+# in a onedir build and in development, they sit next to this module.
+# ---------------------------------------------------------------------------
+
+def resource_path() -> Path:
+    """Root folder that holds bundled resources (knowledge_base, ...)."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass)
+    return Path(__file__).parent
+
+
+KB_BASE = resource_path() / "knowledge_base"
 
 # ---------------------------------------------------------------------------
 # Journal profile loader

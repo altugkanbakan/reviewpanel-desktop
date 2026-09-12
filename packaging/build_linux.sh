@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build_linux.sh — Build ReviewPanel binary for Linux (x86_64)
-# Run from the ReviewPanel-Unix directory on a Linux machine.
+# Sources live in ../src; this script always runs from packaging/.
 set -e
+cd "$(dirname "$0")"
 
 LLMFIT_VER="v0.8.0"
 ARCH=$(uname -m)
@@ -34,7 +35,7 @@ echo ""
 
 # 2. Python dependencies
 echo "[2/3] Installing Python dependencies…"
-pip install -r requirements.txt --quiet
+pip install -r ../requirements.txt --quiet
 echo ""
 
 # 3. PyInstaller build
