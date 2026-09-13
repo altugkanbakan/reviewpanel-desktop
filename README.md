@@ -6,6 +6,8 @@ Review Panel reads your manuscript and runs it through 6 specialist AI reviewers
 
 Everything runs locally. Your manuscript never leaves your machine.
 
+> **Warning**: Review Panel is not a decision-making authority. AI reviewers can make mistakes, and their output must be verified manually before you act on it. Under the 2025 ICMJE and COPE guidelines, reviewing manuscripts that contain sensitive information (such as protected health information), original hypotheses, or material already submitted to a journal with *cloud-based* AI tools would violate confidentiality — Review Panel avoids that specific problem by running entirely on your own machine. One obligation applies regardless: the use of AI for tasks such as fact-checking and editing requires disclosure.
+
 ---
 
 ## What you need before starting
@@ -186,6 +188,9 @@ To build a standalone executable, run the script for your platform from
 `packaging/` (`build.bat`, `build_mac.sh`, `build_linux.sh`). Each fetches the
 `llmfit` hardware-check helper and bundles it. GitHub Actions builds all three
 platforms on every push and attaches them to tagged releases.
+
+Prefer the command line? The original CLI edition of Review Panel is available
+at [altugkanbakan/ReviewPanel](https://github.com/altugkanbakan/ReviewPanel).
 
 ---
 
