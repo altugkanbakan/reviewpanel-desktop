@@ -4,7 +4,7 @@
 
 #define AppName "Review Panel"
 ; Version source: src/core.py::__version__ — update together when bumping.
-#define AppVersion "2.1.2"
+#define AppVersion "2.2.0"
 #define AppPublisher "altugkanbakan"
 #define AppExeName "ReviewPanel.exe"
 
