@@ -606,7 +606,7 @@ def _chunk_field(chunk, key: str):
 def run_agent(
     agent_num: int,
     prompt: str,
-    model: str = "qwen2.5:7b",
+    model: str = "qwen3:4b-instruct-2507-q4_K_M",
     verbose: bool = False,
     num_ctx: int | None = None,
     on_chunk: Callable[[str], None] | None = None,
@@ -732,7 +732,7 @@ def run_all_agents(
     manuscript_data: dict,
     journal: str,
     journal_profile_text: str,
-    model: str = "qwen2.5:7b",
+    model: str = "qwen3:4b-instruct-2507-q4_K_M",
     verbose: bool = False,
 ) -> list[str]:
     """
