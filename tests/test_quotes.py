@@ -178,3 +178,37 @@ class TestReportIntegration:
         assert "could not be found in the manuscript" not in path.read_text(
             encoding="utf-8"
         )
+
+
+class TestCitationRequirement:
+    """
+    A span is judged only when its line claims it came from the manuscript.
+    Calibrated against two real reports: the blocklist alone flagged a
+    reviewer's own proposed sentences, because the giveaway word sat inside
+    the quotation instead of before it.
+    """
+
+    SHORT_FABRICATION = "Alcoholics often face social stigma."
+
+    def test_short_fabrication_with_citation_marker_is_flagged(self):
+        # Five words. Real fabrications observed in a review of a study
+        # about medical students were textbook sentences this short, and
+        # an eight-word floor missed four of the seven.
+        out = f'- **Sentence:** "{self.SHORT_FABRICATION}"'
+        assert _flag(out) == [self.SHORT_FABRICATION]
+
+    def test_fabrication_without_any_marker_is_not_judged(self):
+        # No claim that this came from the manuscript, so no verdict.
+        assert _flag(f'"{self.SHORT_FABRICATION}"') == []
+
+    def test_reviewers_proposed_sentence_is_not_flagged(self):
+        # Observed false alarm: the word that reveals this as a proposal
+        # sits inside the quotation, where a prefix blocklist cannot see it.
+        out = ('- Add a limitation statement: "A patient flow diagram is '
+               'strongly recommended."')
+        assert _flag(out) == []
+
+    def test_citation_marker_does_not_rescue_a_real_quote(self):
+        out = ('*Quote:* "Diabetics who are non-compliant represent the '
+               'highest-risk group in this cohort."')
+        assert _flag(out) == []

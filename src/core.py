@@ -386,7 +386,7 @@ def _missing_markers(agent_num: int, output: str) -> list[str]:
 # false alarm.
 # ---------------------------------------------------------------------------
 
-_QUOTE_MIN_WORDS = 8   # shorter quoted spans carry too little signal
+_QUOTE_MIN_WORDS = 5   # shorter quoted spans carry too little signal
 _QUOTE_WINDOW = 5      # one shared run of this many words = "related"
 
 # Typographic characters normalised to ASCII before any comparison.
@@ -405,6 +405,21 @@ _QUOTE_WORD_RE = re.compile(r"[a-z0-9]+(?:[-.'][a-z0-9]+)*")
 _QUOTE_SKIP_CONTEXT_RE = re.compile(
     r"suggest|replac|correct|revis|recommend|rewrit|rephras|instead"
     r"|should read|→|\brules?\b|guideline|\bama\b|knowledge base",
+    re.IGNORECASE,
+)
+
+# A span is judged only when its line presents it as text taken FROM the
+# manuscript. Requiring the claim, instead of listing the ways a span might
+# not be one, is what keeps a reviewer's own proposed sentence out: measured
+# on a real report, "A patient flow diagram is strongly recommended." was
+# flagged under a blocklist, because the giveaway word sat inside the
+# quotation rather than before it. A model that quotes with no marker at all
+# is simply not checked — silence is the safe direction.
+_QUOTE_CITE_CONTEXT_RE = re.compile(
+    r"\bquot|\bsentence\b|\bphrase\b|\bpassage\b|\bexcerpt\b|\bwording\b"
+    r"|\bstates\b|\breads\b|\bwrites\b|\bsays\b|\bappears\b|\bexample\b"
+    r"|\binstance\b|\bcurrent(?:ly)?\b|\boriginal\b|\btext\b|\bmanuscript\b"
+    r"|\bfound in\b|\bline\b|\buses?\b|\bcontains?\b",
     re.IGNORECASE,
 )
 
@@ -437,13 +452,16 @@ def extract_claimed_quotes(output: str) -> list[str]:
     Double-quoted spans of an agent output that claim to be manuscript
     text and are long enough to judge. Curly quotes count as quotes; a
     span never crosses a line (an unpaired quote must not swallow half
-    the document); spans preceded on their line by rewrite/rule
-    vocabulary are the model's own text and are not returned.
+    the document); a span must be introduced on its line as a citation
+    and must not be introduced as a rewrite, rule or piece of commentary.
     """
     quotes: list[str] = []
     for line in output.translate(_TYPOGRAPHY).splitlines():
         for m in _QUOTED_SPAN_RE.finditer(line):
-            if _QUOTE_SKIP_CONTEXT_RE.search(line[: m.start()]):
+            prefix = line[: m.start()]
+            if _QUOTE_SKIP_CONTEXT_RE.search(prefix):
+                continue
+            if not _QUOTE_CITE_CONTEXT_RE.search(prefix):
                 continue
             if len(_quote_words(m.group(1))) >= _QUOTE_MIN_WORDS:
                 quotes.append(m.group(1))
