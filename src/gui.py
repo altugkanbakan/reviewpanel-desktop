@@ -833,7 +833,7 @@ class ReviewApp(ctk.CTk):
         model_row = ctk.CTkFrame(left, fg_color="transparent")
         model_row.pack(fill="x", padx=16, pady=(2, 4))
 
-        self._model_var = ctk.StringVar(value="qwen2.5:7b")
+        self._model_var = ctk.StringVar(value="qwen3:4b-instruct-2507-q4_K_M")
         self._model_combo = ctk.CTkComboBox(
             model_row, variable=self._model_var,
             values=self._build_model_list(),
@@ -934,12 +934,17 @@ class ReviewApp(ctk.CTk):
 
     def _build_model_list(self, pulled: list[str] | None = None) -> list[str]:
         pulled = pulled or []
+        # Ordered by what fits a modest GPU first. The 4B instruct model is
+        # the default: measured on a 6 GB card it is the only one here that
+        # stays entirely on the GPU and does not spend its output on
+        # reasoning tokens that never reach the report.
         defaults = [
-            "qwen2.5:7b", "qwen2.5:3b", "llama3.2:3b",
-            "gemma3:4b", "llama3.1:8b", "mistral:7b", "qwen2.5:14b",
+            "qwen3:4b-instruct-2507-q4_K_M", "qwen3:4b", "qwen2.5:7b",
+            "qwen2.5:3b", "llama3.2:3b", "gemma3:4b",
+            "llama3.1:8b", "mistral:7b", "qwen2.5:14b",
         ]
         combined = pulled + [m for m in defaults if m not in pulled]
-        return combined or ["qwen2.5:7b"]
+        return combined or ["qwen3:4b-instruct-2507-q4_K_M"]
 
     def _refresh_models(self, quiet: bool = False):
         """Fetch the pulled-model list in a worker thread (GUI never blocks)."""
@@ -1130,7 +1135,7 @@ class ReviewApp(ctk.CTk):
     def _start(self):
         file_path = self._file_var.get().strip() or None
         journal   = self._journal_var.get()
-        model     = self._model_var.get().strip() or "qwen2.5:7b"
+        model     = self._model_var.get().strip() or "qwen3:4b-instruct-2507-q4_K_M"
 
         if not file_path:
             messagebox.showwarning(
