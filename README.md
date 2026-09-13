@@ -22,13 +22,12 @@ Everything runs locally. Your manuscript never leaves your machine.
 ### Windows
 
 1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
-2. Download `ReviewPanel_Setup.exe`
-3. Run the installer and follow the steps
-4. Launch **Review Panel** from the Start menu
+2. Download `ReviewPanel.exe`
+3. Run it — there is no installation step
 
 ### macOS
 
-Before installation, check your OS version. macOS 14 (Sonoma) and later verisons are compatible with Ollama.
+Before installation, check your OS version. macOS 14 (Sonoma) and later versions are compatible with Ollama.
 If you have older macOS that not supported, you can upgrade the OS with [OpenCore-Patcher](https://github.com/dortania/OpenCore-Legacy-Patcher/releases) 
 1. Go to the [Releases page](https://github.com/altugkanbakan/reviewpanel-desktop/releases)
 2. Download `ReviewPanel-macOS.dmg`
@@ -71,7 +70,10 @@ The interface is split into two panels. The **Settings panel** on the left is wh
 
 ### Step 1 — Load your manuscript
 
-Click the **`...`** button next to *Manuscript file* and select your `.docx` file.
+Click the **`...`** button next to *Manuscript file* and select your manuscript.
+Word (`.docx`), LaTeX (`.tex`), Markdown (`.md`) and plain text (`.txt`) are
+supported. A `.tex` file that pulls in chapters with `\input` or `\include` is
+followed and assembled automatically.
 
 ### Step 2 — Select a target journal
 
@@ -79,7 +81,16 @@ Click the *Target journal* dropdown to choose the journal you are submitting to.
 
 ![Journal selection dropdown](docs/UI-2.png)
 
-Available profiles include **JAMA, NEJM, Lancet, BMJ, CJEM, AnnalsEM, Resuscitation, AJEM, JAMIA, BMCMedEd, SimHealthcare**, and **top-medical** (a combined top-tier standard for when you haven't decided on a journal yet).
+**JAMA**, **CJEM**, **AnnalsEM** and **Resuscitation** ship a detailed profile —
+desk-reject triggers, methodology and statistical requirements, and the tone the
+final reviewer adopts. **NEJM, Lancet, BMJ, AJEM, JAMIA, BMCMedEd** and
+**SimHealthcare** are selectable and reviewed against top-tier general medical
+standards.
+
+**top-medical** is the default and applies those same standards: generalizable
+evidence, the reporting guideline that matches your design (CONSORT for trials,
+STROBE for observational work), confidence intervals with exact p-values, and a
+clear clinical bottom line.
 
 ### Step 3 — Choose an AI model
 
@@ -87,13 +98,36 @@ Click the *Ollama model* dropdown to select the model you want to use for the re
 
 ![Model selection dropdown](docs/UI-3.png)
 
-Models already pulled in Ollama appear here automatically. The refresh button (🔄) next to the dropdown reloads the list. If a model you want is not listed, type its name and click **Pull Model** to download it.
+Models already pulled in Ollama appear here automatically. The refresh button (⟳) next to the dropdown reloads the list. If a model you want is not listed, type its name and click **Pull Model** to download it.
 
-> Models with more parameters (e.g. `qwen2.5:14b`) produce more detailed and accurate reviews but require more RAM and VRAM and run slower.
+The default is **`qwen3:4b-instruct-2507-q4_K_M`**. Bigger is not automatically
+better here: what matters most is whether the model fits in your graphics card's
+memory, because a model that does not fit runs partly on the CPU and slows down
+sharply. On a 6 GB card the boundary sits near 3.8 GB of model weights — a 4.7 GB
+7B model left 18% of its layers on the CPU and ran at a third of the speed of a
+4B model that fitted entirely.
+
+Avoid heavily compressed builds (`q3` and below). They are smaller and faster,
+but compression damages instruction-following first: in testing, a `q3` model
+altered a quotation it claimed to be citing and reported an error for text that
+was not in the manuscript at all.
+
+If you have more than 8 GB of VRAM, a larger model will give more thorough
+reviews. Use *Hardware Check* to see what your machine can hold.
 
 ### Step 4 — Run the review
 
-Click **▶ Run Review**. The 6 agent panels on the right will light up one by one as each reviewer completes its section. A progress bar and live log show what is happening. Reviews typically take 5–15 minutes depending on your hardware and model.
+Click **▶ Run Review**. The 6 agent panels on the right light up one by one as
+each reviewer finishes. The log shows the review as it is written, along with the
+generation speed and an estimate of the time left.
+
+With the default model on a 6 GB laptop GPU a review takes roughly 5 minutes;
+a larger model or a CPU-only machine takes longer.
+
+If the review is interrupted — a crash, a closed window, a stopped Ollama — the
+finished agents are kept. Starting the same manuscript again offers to reuse
+them, and reviewing an unchanged manuscript a second time returns almost
+immediately.
 
 ### Step 5 — Open the report
 
@@ -115,31 +149,43 @@ The report includes:
 No. Everything runs on your own machine through Ollama. No data is transmitted anywhere.
 
 **How long does a review take?**
-Typically 5–15 minutes depending on your hardware and model. A dedicated GPU with a larger model gives faster, better results.
+About 5 minutes with the default model on a 6 GB laptop GPU. Larger models and
+CPU-only machines take longer. Reviewing the same manuscript again reuses the
+earlier result and finishes almost at once.
 
 **What file formats are supported?**
-Currently `.docx` (Microsoft Word). PDF support is planned for a future version.
+Word (`.docx`), LaTeX (`.tex`), Markdown (`.md`) and plain text (`.txt`).
 
-**The hardware check button doesn't work — what do I do?**
-The hardware check requires a small companion tool called **llmfit**. Download it separately and place it next to the Review Panel executable:
-
-1. Go to the [llmfit releases page](https://github.com/AlexsJones/llmfit/releases/tag/v0.8.0)
-2. Download the correct file for your system:
-
-| System | File to download |
-|--------|-----------------|
-| Windows (most computers) | `llmfit-v0.8.0-x86_64-pc-windows-msvc.zip` |
-| Mac (M1/M2/M3) | `llmfit-v0.8.0-aarch64-apple-darwin.tar.gz` |
-| Mac (Intel) | `llmfit-v0.8.0-x86_64-apple-darwin.tar.gz` |
-| Linux (most) | `llmfit-v0.8.0-x86_64-unknown-linux-gnu.tar.gz` |
-
-3. Extract the archive and place the `llmfit` (or `llmfit.exe` on Windows) file in the **same folder** as `ReviewPanel.exe` / `ReviewPanel.app` / `ReviewPanel`
-4. Restart Review Panel — the hardware check button will now work
-
-> A future update (v2.2) will remove this manual step entirely.
+PDF is not supported and is refused rather than accepted: a PDF read as plain
+text produces garbled prose, and a review of garbled prose looks convincing
+while being worthless. Export to Word or plain text first.
 
 **Can I use a model I already have installed in Ollama?**
 Yes. Any model already pulled in Ollama will appear in the dropdown automatically.
+
+---
+
+## Running from source
+
+```bash
+git clone https://github.com/altugkanbakan/reviewpanel-desktop.git
+cd reviewpanel-desktop
+pip install -r requirements.txt
+python src/gui.py
+```
+
+`src/` holds the application, `packaging/` the PyInstaller specs and build
+scripts, and `tests/` the test suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+To build a standalone executable, run the script for your platform from
+`packaging/` (`build.bat`, `build_mac.sh`, `build_linux.sh`). Each fetches the
+`llmfit` hardware-check helper and bundles it. GitHub Actions builds all three
+platforms on every push and attaches them to tagged releases.
 
 ---
 
