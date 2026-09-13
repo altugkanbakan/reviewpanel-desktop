@@ -1,12 +1,13 @@
 """
 core.py — Shared constants, journal profile loader, persistent
-agent-output cache, and report builder.
+agent-output cache, quote verification, and report builder.
 """
 
 import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import date, datetime
@@ -357,6 +358,128 @@ def _missing_markers(agent_num: int, output: str) -> list[str]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Quote verification — deterministic guard against fabricated quotations.
+#
+# The agent prompts demand a verbatim quote from the manuscript for every
+# finding, but local models do not always comply: observed failures include
+# silently altered quotes and quotes that are pure invention. The manuscript
+# text is available, so this is checkable in code instead of hoped for in
+# the prompt.
+#
+# The check is deliberately conservative — an unjustified "this may be
+# fabricated" note is worse than no note at all. Not everything between
+# double quotes claims to be manuscript text (suggested rewrites, quoted
+# style rules and the model's own commentary are also quoted), so:
+#
+#   * spans shorter than _QUOTE_MIN_WORDS words are never judged — too
+#     little signal to call anything fabricated;
+#   * spans preceded on their own line by rewrite/rule vocabulary
+#     ("Suggested:", "should be corrected to", "the rule states", ...)
+#     are model-authored text, not claimed quotations — skipped;
+#   * a quote is flagged ONLY when not even one _QUOTE_WINDOW-word run of
+#     it occurs anywhere in the manuscript. Verbatim quotes, shortened
+#     quotes and lightly edited quotes all still share a run and pass.
+#
+# Matching is typography- and punctuation-insensitive: curly quotes,
+# dash variants, line wraps and trailing punctuation must never cause a
+# false alarm.
+# ---------------------------------------------------------------------------
+
+_QUOTE_MIN_WORDS = 8   # shorter quoted spans carry too little signal
+_QUOTE_WINDOW = 5      # one shared run of this many words = "related"
+
+# Typographic characters normalised to ASCII before any comparison.
+_TYPOGRAPHY = str.maketrans({
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    "–": "-", "—": "-", " ": " ",
+})
+
+# Words as they matter for matching: lowercase alphanumeric runs that may
+# contain inner hyphens/periods/apostrophes ("follow-up", "26.1", "it's").
+_QUOTE_WORD_RE = re.compile(r"[a-z0-9]+(?:[-.'][a-z0-9]+)*")
+
+# A span whose same-line prefix matches this is NOT a claimed manuscript
+# quotation (suggested rewrite, quoted rule/guideline, model commentary).
+# Matching more here only skips a check (conservative); it never flags.
+_QUOTE_SKIP_CONTEXT_RE = re.compile(
+    r"suggest|replac|correct|revis|recommend|rewrit|rephras|instead"
+    r"|should read|→|\brules?\b|guideline|\bama\b|knowledge base",
+    re.IGNORECASE,
+)
+
+_QUOTED_SPAN_RE = re.compile(r'"([^"]+)"')
+
+
+def _quote_words(text: str) -> list[str]:
+    """Matching-relevant words of text (lowercased, typography-normalised)."""
+    return _QUOTE_WORD_RE.findall(text.translate(_TYPOGRAPHY).lower())
+
+
+def quote_index(full_text: str) -> tuple[str, set[str]]:
+    """
+    Precomputed matching index for one manuscript: (padded word string,
+    set of _QUOTE_WINDOW-word runs). Built once per report and reused for
+    every agent output — the window scan must not re-derive manuscript
+    n-grams per quote.
+    """
+    words = _quote_words(full_text)
+    joined = " " + " ".join(words) + " "
+    windows = {
+        " ".join(words[i:i + _QUOTE_WINDOW])
+        for i in range(len(words) - _QUOTE_WINDOW + 1)
+    }
+    return joined, windows
+
+
+def extract_claimed_quotes(output: str) -> list[str]:
+    """
+    Double-quoted spans of an agent output that claim to be manuscript
+    text and are long enough to judge. Curly quotes count as quotes; a
+    span never crosses a line (an unpaired quote must not swallow half
+    the document); spans preceded on their line by rewrite/rule
+    vocabulary are the model's own text and are not returned.
+    """
+    quotes: list[str] = []
+    for line in output.translate(_TYPOGRAPHY).splitlines():
+        for m in _QUOTED_SPAN_RE.finditer(line):
+            if _QUOTE_SKIP_CONTEXT_RE.search(line[: m.start()]):
+                continue
+            if len(_quote_words(m.group(1))) >= _QUOTE_MIN_WORDS:
+                quotes.append(m.group(1))
+    return quotes
+
+
+def find_unverified_quotes(
+    output: str, index: tuple[str, set[str]]
+) -> list[str]:
+    """
+    Claimed manuscript quotes in output that share NO _QUOTE_WINDOW-word
+    run with the manuscript (index from quote_index). Verbatim quotes,
+    shortened quotes and light rewrites all share a run and pass; only
+    quotes with no meaningful overlap at all are returned (deduplicated,
+    in output order).
+    """
+    joined, windows = index
+    flagged: list[str] = []
+    seen: set[str] = set()
+    for quote in extract_claimed_quotes(output):
+        words = _quote_words(quote)
+        key = " ".join(words)
+        if key in seen:
+            continue
+        seen.add(key)
+        if f" {key} " in joined:
+            continue                                    # verbatim match
+        if any(
+            " ".join(words[i:i + _QUOTE_WINDOW]) in windows
+            for i in range(len(words) - _QUOTE_WINDOW + 1)
+        ):
+            continue                                    # related to the text
+        flagged.append(quote)
+    return flagged
+
+
 def _format_run_stats(run_stats: dict) -> list[str]:
     """
     Render the optional 'Run statistics' block appended to the report.
@@ -447,6 +570,9 @@ def build_report(
         "",
     ]
 
+    full_text = str(manuscript_data.get("full_text") or "")
+    quote_idx = quote_index(full_text) if full_text.strip() else None
+
     for i, output in enumerate(agent_outputs, start=1):
         lines += [
             f"## {_SECTION_HEADERS[i]}",
@@ -462,6 +588,25 @@ def build_report(
                 "> ⚠ This section may be incomplete — the model did not "
                 "return the expected structure "
                 f"(missing: {', '.join(missing)}).",
+                "",
+            ]
+        unverified = (
+            find_unverified_quotes(output, quote_idx) if quote_idx else []
+        )
+        if unverified:
+            logger.warning(
+                "Agent %d output quotes %d passage(s) not found in the "
+                "manuscript", i, len(unverified),
+            )
+            examples = "; ".join(
+                '"{}"'.format(q if len(q) <= 80 else q[:79] + "…")
+                for q in unverified[:3]
+            )
+            lines += [
+                f"> ⚠ {len(unverified)} quoted passage(s) in this section "
+                "could not be found in the manuscript — the model may have "
+                "altered or invented them. Verify these findings against "
+                f"the manuscript: {examples}.",
                 "",
             ]
         lines += [
