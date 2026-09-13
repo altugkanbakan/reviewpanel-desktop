@@ -17,7 +17,7 @@ from platforms import cache_dir
 
 logger = logging.getLogger(__name__)
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 # ---------------------------------------------------------------------------
 # Journal registry
