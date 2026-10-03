@@ -7,11 +7,13 @@ Guards:
   * read_tex_recursive resolves \\input/\\include and terminates on
     cyclic includes (regression: infinite recursion).
   * read_docx raises ValueError on a corrupt file, reads a real one.
+  * MarkItDown keeps .docx tables as Markdown and reads text-based .pdf;
+    python-docx remains the fallback.
 """
 
 import pytest
 
-from manuscript import discover_manuscript, read_docx, read_tex_recursive
+from manuscript import discover_manuscript, read_docx, read_pdf, read_tex_recursive
 
 
 class TestDiscoverManuscript:
@@ -117,3 +119,92 @@ class TestReadDocx:
         text = read_docx(path)
         assert "First paragraph." in text
         assert "Second paragraph." in text
+
+
+def _minimal_pdf(text: str) -> bytes:
+    """A tiny single-page, text-based PDF (no reportlab needed)."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objs) + 1, xref
+    )
+    return bytes(out)
+
+
+class TestMarkItDown:
+    """MarkItDown path: tables survive as Markdown, PDFs are readable, and
+    the python-docx fallback still works when MarkItDown is unavailable."""
+
+    def test_docx_table_kept_as_markdown(self, tmp_path):
+        pytest.importorskip("markitdown")
+        docx = pytest.importorskip("docx")
+        doc = docx.Document()
+        doc.add_paragraph("Baseline data follow.")
+        table = doc.add_table(rows=2, cols=2)
+        for i, row in enumerate([["Age", "54.2"], ["Male %", "61"]]):
+            for j, value in enumerate(row):
+                table.cell(i, j).text = value
+        path = tmp_path / "tables.docx"
+        doc.save(str(path))
+        text = read_docx(path)
+        assert "| Age | 54.2 |" in text
+
+    def test_docx_falls_back_to_python_docx(self, tmp_path, monkeypatch):
+        docx = pytest.importorskip("docx")
+        import manuscript
+        monkeypatch.setattr(manuscript, "_get_markitdown", lambda: None)
+        doc = docx.Document()
+        doc.add_paragraph("Fallback paragraph.")
+        path = tmp_path / "fallback.docx"
+        doc.save(str(path))
+        assert "Fallback paragraph." in read_docx(path)
+
+    def test_docx_title_uses_stem_not_first_section(self, tmp_path):
+        pytest.importorskip("markitdown")
+        docx = pytest.importorskip("docx")
+        doc = docx.Document()
+        doc.add_heading("Methods", 1)
+        doc.add_paragraph("We enrolled patients.")
+        path = tmp_path / "my_study.docx"
+        doc.save(str(path))
+        assert discover_manuscript(str(path))["title"] == "my_study"
+
+    def test_reads_text_pdf(self, tmp_path):
+        pytest.importorskip("markitdown")
+        path = tmp_path / "paper.pdf"
+        path.write_bytes(_minimal_pdf("Hello manuscript PDF"))
+        data = discover_manuscript(str(path))
+        assert "Hello manuscript PDF" in data["full_text"]
+        # The manuscript PDF itself is not listed as a figure
+        assert str(path.resolve()) not in data["figure_files"]
+
+    def test_unreadable_pdf_raises_value_error(self, tmp_path):
+        pytest.importorskip("markitdown")
+        path = tmp_path / "broken.pdf"
+        path.write_bytes(b"%PDF-1.4 not really a pdf")
+        with pytest.raises(ValueError):
+            read_pdf(path)
+
+    def test_pdf_without_markitdown_raises_import_error(self, tmp_path, monkeypatch):
+        import manuscript
+        monkeypatch.setattr(manuscript, "_get_markitdown", lambda: None)
+        path = tmp_path / "paper.pdf"
+        path.write_bytes(_minimal_pdf("x"))
+        with pytest.raises(ImportError):
+            read_pdf(path)
