@@ -1,5 +1,6 @@
 ollama>=0.4.0,<1.0
 httpx>=0.27,<1.0        # imported directly by agents.py; ollama's own dep
-python-docx>=1.1.0,<2.0
+python-docx>=1.1.0,<2.0   # fallback .docx reader when markitdown fails
+markitdown[docx,pdf]>=0.1.8,<0.2   # local .docx/.pdf -> Markdown (Microsoft, MIT)
 pyinstaller>=6.0,<7.0
 customtkinter>=5.2.0,<6.0

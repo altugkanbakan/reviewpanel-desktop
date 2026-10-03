@@ -73,8 +73,8 @@ The interface is split into two panels. The **Settings panel** on the left is wh
 ### Step 1 — Load your manuscript
 
 Click the **`...`** button next to *Manuscript file* and select your manuscript.
-Word (`.docx`), LaTeX (`.tex`), Markdown (`.md`) and plain text (`.txt`) are
-supported. A `.tex` file that pulls in chapters with `\input` or `\include` is
+Word (`.docx`), text-based PDF (`.pdf`), LaTeX (`.tex`), Markdown (`.md`) and
+plain text (`.txt`) are supported. A `.tex` file that pulls in chapters with `\input` or `\include` is
 followed and assembled automatically.
 
 ### Step 2 — Select a target journal
@@ -156,11 +156,20 @@ CPU-only machines take longer. Reviewing the same manuscript again reuses the
 earlier result and finishes almost at once.
 
 **What file formats are supported?**
-Word (`.docx`), LaTeX (`.tex`), Markdown (`.md`) and plain text (`.txt`).
+Word (`.docx`), text-based PDF (`.pdf`), LaTeX (`.tex`), Markdown (`.md`) and
+plain text (`.txt`).
 
-PDF is not supported and is refused rather than accepted: a PDF read as plain
-text produces garbled prose, and a review of garbled prose looks convincing
-while being worthless. Export to Word or plain text first.
+Word and PDF files are converted to Markdown with Microsoft
+[MarkItDown](https://github.com/microsoft/markitdown), bundled with the app and
+run entirely offline — headings and tables survive the conversion, so the
+tables-and-figures reviewer sees tables as tables. Figures and images are never
+visible to the reviewers, only their captions.
+
+PDF is accepted with a warning. Text pulled out of a PDF can come out of order
+(two-column layouts) or with flattened tables, and a review of scrambled text
+looks convincing while being worthless. Prefer the `.docx`; if you must use a
+PDF, use a single-column one exported from Word. Scanned (image-only) PDFs are
+refused: reading them would need OCR, which Review Panel does not do offline.
 
 **Can I use a model I already have installed in Ollama?**
 Yes. Any model already pulled in Ollama will appear in the dropdown automatically.

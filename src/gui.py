@@ -89,7 +89,7 @@ _AGENT_QUIPS = {
     6: ["Channeling a demanding associate editor…", "Weighing clinical impact…", "Desk reject or not?…"],
 }
 
-_SUPPORTED_EXTS = (".tex", ".md", ".docx", ".txt")
+_SUPPORTED_EXTS = (".tex", ".md", ".docx", ".pdf", ".txt")
 
 # ---------------------------------------------------------------------------
 # Helpers — llmfit
@@ -1036,10 +1036,11 @@ class ReviewApp(ctk.CTk):
         path = filedialog.askopenfilename(
             title="Select Manuscript",
             filetypes=[
-                ("Supported files", "*.tex *.md *.docx *.txt"),
+                ("Supported files", "*.tex *.md *.docx *.pdf *.txt"),
                 ("LaTeX",           "*.tex"),
                 ("Markdown",        "*.md"),
                 ("Word Document",   "*.docx"),
+                ("PDF (text-based)", "*.pdf"),
                 ("Text",            "*.txt"),
             ],
         )
@@ -1047,7 +1048,7 @@ class ReviewApp(ctk.CTk):
             if Path(path).suffix.lower() not in _SUPPORTED_EXTS:
                 messagebox.showwarning(
                     "Unsupported file type",
-                    "Supported formats: .tex, .md, .docx, .txt — PDF is not supported.",
+                    "Supported formats: .tex, .md, .docx, .pdf (text-based), .txt.",
                 )
                 return
             self._file_var.set(path)
@@ -1146,8 +1147,21 @@ class ReviewApp(ctk.CTk):
         if Path(file_path).suffix.lower() not in _SUPPORTED_EXTS:
             messagebox.showwarning(
                 "Unsupported file type",
-                "Supported formats: .tex, .md, .docx, .txt — PDF is not supported.",
+                "Supported formats: .tex, .md, .docx, .pdf (text-based), .txt.",
             )
+            return
+        # PDF text extraction can scramble reading order (two-column
+        # layouts, flattened tables), and a review of scrambled text looks
+        # convincing while being worthless — make the user opt in.
+        if Path(file_path).suffix.lower() == ".pdf" and not messagebox.askokcancel(
+            "PDF manuscript",
+            "Text extracted from a PDF can come out out-of-order or with "
+            "flattened tables, which degrades the review.\n\n"
+            "Best results: a single-column PDF exported from Word — or, "
+            "better still, the .docx itself. Scanned PDFs are not supported.\n\n"
+            "Continue with this PDF?",
+            icon="warning",
+        ):
             return
 
         try:
